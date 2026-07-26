@@ -20,13 +20,18 @@ if [[ ! -f "${project_dir}/certs/server.crt" ]]; then
   "${project_dir}/scripts/generate-certs.sh"
 fi
 docker volume create "${cert_volume}" >/dev/null
-docker create --name "${staging_container}" \
+docker create --name "${staging_container}" --entrypoint /bin/sh \
   --mount "type=volume,source=${cert_volume},target=/certs" \
-  "${image}" /bin/true >/dev/null
+  "${image}" -c 'sleep infinity' >/dev/null
+docker start "${staging_container}" >/dev/null
 for certificate in ca.crt server.crt server.key; do
   docker cp "${project_dir}/certs/${certificate}" "${staging_container}:/certs/${certificate}"
 done
-docker rm "${staging_container}" >/dev/null
+# Docker user namespaces can retain the host UID on copied files. The private
+# key remains inside a volume mounted only by the server, so make it readable
+# by the server's remapped runtime identity without exposing it on the host.
+docker exec "${staging_container}" chmod 0444 /certs/ca.crt /certs/server.crt /certs/server.key
+docker rm --force "${staging_container}" >/dev/null
 staging_container=""
 docker compose --project-directory "${project_dir}" up --detach --wait
 for group in X25519 MLKEM768 X25519MLKEM768; do

@@ -54,4 +54,5 @@ networks:
 
 volumes:
   pqcbench-certs:
+    external: true
     name: ${PQC_BENCH_CERT_VOLUME:-pqc-tls-bench-certs}
