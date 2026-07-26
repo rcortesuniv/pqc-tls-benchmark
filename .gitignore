@@ -2,8 +2,8 @@ build/
 dist/
 results/
 runtime/
+*.pcap
 certs/*.key
 certs/*.crt
 __pycache__/
 *.pyc
-

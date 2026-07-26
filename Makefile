@@ -1,10 +1,16 @@
 CC ?= cc
 OPENSSL_PREFIX ?= /opt/openssl-3.5.7
+OPENSSL_LIBDIR ?= $(firstword $(wildcard $(OPENSSL_PREFIX)/lib64 $(OPENSSL_PREFIX)/lib))
 CPPFLAGS += -I$(OPENSSL_PREFIX)/include
 CFLAGS ?= -O2 -g -std=c11 -Wall -Wextra -Wpedantic
-LDFLAGS += -L$(OPENSSL_PREFIX)/lib64 -L$(OPENSSL_PREFIX)/lib
+LDFLAGS += -L$(OPENSSL_LIBDIR)
 LDLIBS += -lssl -lcrypto
-RPATH = -Wl,-rpath,$(OPENSSL_PREFIX)/lib64 -Wl,-rpath,$(OPENSSL_PREFIX)/lib
+RPATH = -Wl,-rpath,$(OPENSSL_LIBDIR)
+
+ifeq ($(shell uname -s),Linux)
+CFLAGS += -fstack-protector-strong -fPIE -D_FORTIFY_SOURCE=3
+LDFLAGS += -Wl,-z,relro,-z,now -pie
+endif
 
 .PHONY: all clean test
 

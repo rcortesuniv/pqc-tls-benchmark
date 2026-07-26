@@ -21,6 +21,13 @@ services:
     cpus: "1.0"
     mem_limit: 1g
     pids_limit: 256
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
     cap_add: [NET_ADMIN]
   client:
     image: ${PQC_BENCH_IMAGE:-pqc-tls-bench:3.5.7}
@@ -31,8 +38,16 @@ services:
     cpus: "1.0"
     mem_limit: 1g
     pids_limit: 256
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
     cap_add: [NET_ADMIN]
 
 networks:
   pqcbench:
     driver: bridge
+    internal: true

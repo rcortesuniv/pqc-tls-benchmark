@@ -61,9 +61,9 @@ static int mlkem_iteration(void)
     ok = 1;
 
 cleanup:
-    OPENSSL_free(ciphertext);
-    OPENSSL_free(shared_secret);
-    OPENSSL_free(recovered_secret);
+    OPENSSL_clear_free(ciphertext, ciphertext_length);
+    OPENSSL_clear_free(shared_secret, shared_secret_length);
+    OPENSSL_clear_free(recovered_secret, recovered_secret_length);
     EVP_PKEY_CTX_free(encapsulate);
     EVP_PKEY_CTX_free(decapsulate);
     EVP_PKEY_free(key);
@@ -89,7 +89,7 @@ static int x25519_iteration(void)
     ok = 1;
 
 cleanup:
-    OPENSSL_free(shared_secret);
+    OPENSSL_clear_free(shared_secret, shared_secret_length);
     EVP_PKEY_CTX_free(derive);
     EVP_PKEY_free(left);
     EVP_PKEY_free(right);

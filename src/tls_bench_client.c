@@ -7,6 +7,7 @@
 #include <netdb.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -306,9 +307,17 @@ static bool run_handshake(SSL_CTX *context, const options *opts,
         return false;
     }
 
-    SSL_set_fd(ssl, socket_fd);
-    SSL_set_tlsext_host_name(ssl, opts->server_name);
-    SSL_set1_host(ssl, opts->server_name);
+    if (SSL_set_fd(ssl, socket_fd) != 1 ||
+        SSL_set_tlsext_host_name(ssl, opts->server_name) != 1 ||
+        SSL_set1_host(ssl, opts->server_name) != 1) {
+        if (recorded) {
+            emit_result(opts, sequence, timestamp, status, "ssl_initialise",
+                        latency_ms, NULL, NULL, &counts, ERR_peek_last_error());
+        }
+        SSL_free(ssl);
+        close(socket_fd);
+        return false;
+    }
     SSL_set_session(ssl, NULL);
     socket_bio = SSL_get_wbio(ssl);
     BIO_set_callback_arg(socket_bio, (char *)&counts);
@@ -366,6 +375,9 @@ int main(int argc, char **argv)
         usage(argv[0]);
         return EXIT_FAILURE;
     }
+
+    /* A peer may close during a write; report the handshake failure instead of dying. */
+    signal(SIGPIPE, SIG_IGN);
 
     OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS |
                      OPENSSL_INIT_LOAD_CRYPTO_STRINGS, NULL);

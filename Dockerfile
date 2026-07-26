@@ -24,9 +24,11 @@ RUN curl --fail --location --proto '=https' --tlsv1.2 \
 WORKDIR /src
 COPY src/tls_bench_client.c /src/
 RUN cc -O2 -g -std=c11 -Wall -Wextra -Wpedantic \
+      -fstack-protector-strong -fPIE -D_FORTIFY_SOURCE=3 \
       -I/opt/openssl/include tls_bench_client.c \
       -L/opt/openssl/lib64 -L/opt/openssl/lib \
       -Wl,-rpath,/opt/openssl/lib64 -Wl,-rpath,/opt/openssl/lib \
+      -Wl,-z,relro,-z,now -pie \
       -lssl -lcrypto -o /usr/local/bin/tls_bench_client
 
 FROM ubuntu:24.04
@@ -39,4 +41,3 @@ COPY --from=builder /usr/local/bin/tls_bench_client /usr/local/bin/tls_bench_cli
 ENV PATH="/opt/openssl/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/openssl/lib64:/opt/openssl/lib"
 ENTRYPOINT ["/usr/local/bin/tls_bench_client"]
-

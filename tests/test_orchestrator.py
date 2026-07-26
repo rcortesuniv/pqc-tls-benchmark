@@ -63,6 +63,15 @@ class OrchestratorTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 MODULE.load_config(pathlib.Path(stream.name))
 
+    def test_unsafe_backend_identifier_is_rejected(self):
+        invalid = json.loads(json.dumps(self.config))
+        invalid["network_backend"]["client_namespace"] = "client namespace"
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as stream:
+            json.dump(invalid, stream)
+            stream.flush()
+            with self.assertRaises(ValueError):
+                MODULE.load_config(pathlib.Path(stream.name))
+
 
 if __name__ == "__main__":
     unittest.main()

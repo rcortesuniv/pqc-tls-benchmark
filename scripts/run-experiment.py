@@ -11,10 +11,12 @@ import os
 import pathlib
 import platform
 import random
+import re
 import resource
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any
 
@@ -38,22 +40,41 @@ def load_config(path: pathlib.Path) -> dict[str, Any]:
     missing = [key for key in required if key not in config]
     if missing:
         raise ValueError(f"Missing configuration keys: {', '.join(missing)}")
+    if not isinstance(config["groups"], list) or not config["groups"]:
+        raise ValueError("groups must be a non-empty list")
+    if not all(isinstance(group, str) and re.fullmatch(r"[A-Za-z0-9-]+", group) for group in config["groups"]):
+        raise ValueError("TLS group names may contain only letters, digits and hyphens")
     if len(set(config["groups"])) != len(config["groups"]):
         raise ValueError("TLS group names must be unique")
-    if config["execution"]["batches"] < 1:
+    if not isinstance(config["execution"], dict) or not isinstance(config["network"], dict):
+        raise ValueError("execution and network must be objects")
+    if not isinstance(config["execution"].get("batches"), int) or config["execution"]["batches"] < 1:
         raise ValueError("execution.batches must be at least 1")
     execution = config["execution"]
     for key in ("warmup_handshakes_per_cell", "recorded_handshakes_per_cell", "timeout_ms"):
-        if not isinstance(execution.get(key), int) or execution[key] < 0:
+        if isinstance(execution.get(key), bool) or not isinstance(execution.get(key), int) or execution[key] < 0:
             raise ValueError(f"execution.{key} must be a non-negative integer")
     if execution["recorded_handshakes_per_cell"] < 1:
         raise ValueError("execution.recorded_handshakes_per_cell must be at least 1")
     if execution["timeout_ms"] < 1:
         raise ValueError("execution.timeout_ms must be at least 1")
-    if any(float(value) < 0 for value in config["network"]["rtt_ms"]):
+    if not isinstance(config["network"].get("rtt_ms"), list) or not config["network"]["rtt_ms"]:
+        raise ValueError("network.rtt_ms must be a non-empty list")
+    if not isinstance(config["network"].get("loss_percent_each_direction"), list) or not config["network"]["loss_percent_each_direction"]:
+        raise ValueError("network.loss_percent_each_direction must be a non-empty list")
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0 for value in config["network"]["rtt_ms"]):
         raise ValueError("network.rtt_ms values must be non-negative")
-    if any(not 0 <= float(value) <= 100 for value in config["network"]["loss_percent_each_direction"]):
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 100 for value in config["network"]["loss_percent_each_direction"]):
         raise ValueError("network.loss_percent_each_direction values must be between 0 and 100")
+    if not isinstance(config["endpoint"], dict) or not all(isinstance(config["endpoint"].get(key), (str, int)) for key in ("host", "port", "server_name", "ca_file")):
+        raise ValueError("endpoint must define host, port, server_name and ca_file")
+    backend = config.get("network_backend")
+    if not isinstance(backend, dict) or backend.get("type") != "netns":
+        raise ValueError("network_backend.type must be netns")
+    for key in ("client_namespace", "server_namespace", "client_interface", "server_interface"):
+        value = backend.get(key)
+        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", value):
+            raise ValueError(f"network_backend.{key} is invalid")
     return config
 
 
@@ -168,8 +189,14 @@ def sha256(path: pathlib.Path) -> str:
 
 def write_json(path: pathlib.Path, value: Any) -> None:
     """Atomically replace provenance files; raw observations remain create-only."""
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
+    ) as stream:
+        stream.write(json.dumps(value, indent=2) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+        temporary = pathlib.Path(stream.name)
+    os.chmod(temporary, 0o600)
     temporary.replace(path)
 
 
@@ -218,17 +245,20 @@ def process_tree_peak_rss_kib(pid: int) -> int | None:
 
 def run_monitored(command: list[str], raw_output: Any) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
     started_usage = child_usage()
-    process = subprocess.Popen(command, text=True, stdout=raw_output, stderr=subprocess.PIPE)
-    peak_rss_kib = 0
-    while process.poll() is None:
-        sampled = process_tree_peak_rss_kib(process.pid)
-        if sampled:
-            peak_rss_kib = max(peak_rss_kib, sampled)
-        time.sleep(0.01)
-    stderr = process.communicate()[1]
-    final_sample = process_tree_peak_rss_kib(process.pid)
-    if final_sample:
-        peak_rss_kib = max(peak_rss_kib, final_sample)
+    with tempfile.SpooledTemporaryFile(max_size=1024 * 1024, mode="w+t", encoding="utf-8") as stderr_stream:
+        process = subprocess.Popen(command, text=True, stdout=raw_output, stderr=stderr_stream)
+        peak_rss_kib = 0
+        while process.poll() is None:
+            sampled = process_tree_peak_rss_kib(process.pid)
+            if sampled:
+                peak_rss_kib = max(peak_rss_kib, sampled)
+            time.sleep(0.01)
+        process.wait()
+        stderr_stream.seek(0)
+        stderr = stderr_stream.read()
+        final_sample = process_tree_peak_rss_kib(process.pid)
+        if final_sample:
+            peak_rss_kib = max(peak_rss_kib, final_sample)
     return (
         subprocess.CompletedProcess(command, process.returncode, stderr=stderr),
         {
@@ -349,8 +379,6 @@ def main() -> int:
             "--timeout-ms", str(execution["timeout_ms"]),
         ])
         record["client_command"] = shlex.join(client_command)
-        schedule_records.append(record)
-
         if args.dry_run:
             print(f"{ordinal:04d} {batch_id} {cell.identifier}")
         else:
