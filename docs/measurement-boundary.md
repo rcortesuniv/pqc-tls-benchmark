@@ -16,6 +16,11 @@ failures separately. The socket BIO callback counts TLS record bytes crossing
 the OpenSSL/socket boundary. These are not Ethernet, IP or TCP byte counts; a
 packet-capture module will be needed when transport-layer attribution is added.
 
+OpenSSL reports canonical group names in lowercase, whereas the configured
+CLI names use the conventional uppercase spelling. Verification therefore uses
+case-insensitive equality while still requiring the complete group name to
+match.
+
 The current runner applies half the configured round-trip delay to each
 direction. The configured loss percentage is also applied independently in
 each direction, and is therefore described explicitly as

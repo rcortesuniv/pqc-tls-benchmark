@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <poll.h>
@@ -333,7 +334,9 @@ static bool run_handshake(SSL_CTX *context, const options *opts,
     if (result == 1) {
         negotiated_group = SSL_get0_group_name(ssl);
         cipher = SSL_get_cipher_name(ssl);
-        if (negotiated_group && strcmp(negotiated_group, opts->group) == 0) {
+        /* OpenSSL returns canonical group names in lowercase (for example,
+         * "x25519") while the experiment config uses CLI spelling ("X25519"). */
+        if (negotiated_group && strcasecmp(negotiated_group, opts->group) == 0) {
             status = "success";
             phase = NULL;
         } else {
