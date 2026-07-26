@@ -20,13 +20,14 @@ cryptographic implementation.
 - Fresh TLS 1.3 handshake state for every attempt, with session caching off.
 - Exact negotiated-group verification on every successful handshake.
 - Separate recording of TCP, TLS and verification failures.
-- TLS socket-BIO byte counts for explanatory analysis.
+- TLS socket-BIO byte counts, process CPU time and peak-RSS evidence for explanatory analysis.
 - A 36-cell matrix: 3 groups × 4 RTT levels × 3 per-direction loss levels.
 - Seeded random order within each complete batch.
 - Symmetric Linux network emulation using isolated network namespaces.
-- Per-cell append-only JSONL, configuration snapshots, environment metadata
-  and SHA-256 integrity hashes.
-- Batch-cell summaries and the primary hybrid-minus-classical median delta.
+- Per-cell append-only JSONL, frozen schedules, configuration snapshots,
+  environment metadata and SHA-256 integrity manifests.
+- Batch-cell summaries, primary hybrid-minus-classical deltas, bootstrap
+  intervals, autocorrelation diagnostics and Holm-adjusted paired contrasts.
 
 The measurement boundary and field semantics are documented in
 [`docs/measurement-boundary.md`](docs/measurement-boundary.md) and
@@ -36,16 +37,11 @@ implemented, partial or still pending.
 
 ## Status
 
-This is **Milestone 1: executable core**. It is suitable for software
-development and pilot preparation, but not yet for definitive data collection.
-The definitive study must wait for supervisor feedback, ethics screening,
-pilot-based settings and a frozen analysis plan.
-
-CPU/RSS attribution, fixed-concurrency throughput, packet capture,
-microbenchmarks and batch-aware confidence intervals remain on the documented
-[`roadmap`](docs/roadmap.md). The current native Linux network-namespace
-backend will also be complemented by a fixed-resource container backend before
-the definitive experiment.
+This artefact implements the roadmap's collection, explanatory and analysis
+tooling. It is suitable for a **pilot**, not yet definitive data collection.
+The definitive study must still wait for supervisor feedback, ethics screening,
+pilot-calibrated settings and a frozen analysis plan. Tooling does not make
+those research-governance decisions automatically.
 
 ## Requirements
 
@@ -89,6 +85,14 @@ An image definition is also included:
 docker build --tag pqc-tls-bench:3.5.7 .
 ```
 
+For the fixed-resource backend, use `scripts/container-lab-up.sh`. The Compose
+definition pins each endpoint to one CPU, 1 GiB memory and 256 processes;
+change those values only before a new pilot and preserve the updated
+configuration as evidence. After it is started, use the same randomised runner
+with `scripts/run-experiment.py --backend container`; resource observations in
+that mode describe the Compose launcher, while the endpoint resource boundary
+is enforced by Docker's configured limits.
+
 ## Start the isolated lab
 
 ```bash
@@ -106,6 +110,14 @@ scripts/lab-down.sh
 ```
 
 Traffic never leaves the isolated point-to-point namespace link.
+
+`lab-up.sh` verifies connectivity and performs one exact-group handshake for
+each experimental group before reporting readiness. Calibrate a configured
+profile independently before a pilot cell, for example:
+
+```bash
+scripts/calibrate-network.py --expected-rtt-ms 50 --expected-loss-percent 0.5
+```
 
 ## Inspect the randomised schedule
 
@@ -141,6 +153,39 @@ The primary CSV contains paired within-batch median differences between
 `X25519MLKEM768` and `X25519` for each network condition. Individual
 handshakes remain nested subsamples and are not treated as independent
 confirmatory units.
+
+The script also writes `pairwise_batch_deltas.csv`,
+`confirmatory_analysis.json` and a strict `validation.json`. The confirmatory
+report uses batch-level percentile bootstrap intervals, lag-1 autocorrelation
+diagnostics, paired sign-randomisation tests and Holm adjustment. It fails if
+the frozen schedule is incomplete, raw records are duplicated/impossible, or
+an integrity hash no longer matches.
+
+## Explanatory workloads
+
+Run fixed-concurrency throughput separately from latency collection:
+
+```bash
+scripts/run-throughput.py --group X25519MLKEM768 --workers 4 --handshakes-per-worker 100
+```
+
+The client runner records child CPU time and observed peak RSS for each cell.
+For cryptographic-only comparison, build and run:
+
+```bash
+build/pqc_microbench --iterations 1000
+```
+
+For transport-byte evidence, capture a cell and parse it with `tshark`:
+
+```bash
+scripts/capture-traffic.sh results/pilot/capture.pcap runtime/capture.pid
+# run the selected cell, then: sudo kill "$(cat runtime/capture.pid)"
+analysis/parse-pcap.py results/pilot/capture.pcap --output results/pilot/transport_bytes.csv
+```
+
+The capture parser reports TCP payload bytes by direction; it deliberately does
+not relabel TLS socket-BIO bytes as transport bytes.
 
 ## Reproducibility rules
 

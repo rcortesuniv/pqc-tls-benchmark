@@ -17,12 +17,22 @@
 - Thermal/background-load monitors.
 - Pilot-based timeout, warm-up and batch-count decisions.
 
+Implemented as tooling: `compose.yaml` and the container scripts provide fixed
+resource limits; `lab-up.sh` verifies every negotiated group; calibration is
+recorded through `calibrate-network.py`; and the runner freezes its schedule
+and preserves cell-level resource evidence. The numeric settings are still
+provisional until a pilot has been reviewed.
+
 ## Milestone 3 — explanatory measures
 
 - Packet capture and transport-byte parsing.
 - Batch/process CPU and peak-RSS collection.
 - Explicit fixed-concurrency throughput workload.
 - ML-KEM key-generation, encapsulation and decapsulation microbenchmarks.
+
+Implemented as separate workloads so they do not contaminate the primary
+latency endpoint: runner resource evidence, `capture-traffic.sh` plus
+`parse-pcap.py`, `run-throughput.py`, and `pqc_microbench`.
 
 ## Milestone 4 — confirmatory analysis
 
@@ -32,6 +42,11 @@
 - Multiplicity-controlled pairwise contrasts.
 - Frozen acceptance-threshold sensitivity analysis.
 
+Implemented in `analysis/summarise.py`: integrity/completeness and
+impossible-value checks, batch-level bootstrap intervals, lag-1 diagnostics,
+paired sign-randomisation contrasts with Holm adjustment, and configured
+threshold sensitivity. These functions execute a frozen plan; they do not
+license post-hoc threshold selection.
+
 The definitive experiment must not begin until the pilot settings and analysis
 plan are frozen and supervisor/ethics requirements are known.
-

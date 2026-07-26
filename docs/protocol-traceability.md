@@ -2,7 +2,7 @@
 
 | Preliminary protocol requirement | Initial implementation | Status |
 | --- | --- | --- |
-| OpenSSL 3.5.x native groups | 3.5.7 build script, Dockerfile and environment check | Implemented; integration build pending on target Linux host |
+| OpenSSL 3.5.x native groups | 3.5.7 build script, Dockerfile and environment check | Implemented; target-Linux integration still required |
 | X25519, MLKEM768, X25519MLKEM768 | Exact single-group offer and post-handshake group verification | Implemented |
 | Full TLS 1.3 handshakes | TLS 1.3 min/max fixed; new TCP and `SSL` object per attempt; cache disabled | Implemented |
 | Client-side monotonic boundary | `CLOCK_MONOTONIC` immediately around `SSL_connect()` | Implemented |
@@ -13,17 +13,16 @@
 | Warm-ups excluded | Warm-up loop produces no raw observations | Implemented |
 | Failures retained | TCP/TLS/verification outcomes recorded explicitly | Implemented |
 | Append-only machine-readable raw data | Exclusive-create per-cell JSONL files | Implemented |
-| Environment and integrity evidence | Config snapshot, manifest and SHA-256 hashes | Implemented |
+| Environment and integrity evidence | Frozen schedule before the first cell, provenance manifest and SHA-256 integrity manifest | Implemented |
 | Batch as confirmatory unit | Per-batch cell medians and paired batch deltas | Implemented |
-| CPU core/resource controls | Planned container backend and host monitoring | Not yet implemented |
-| Independently verified network profile | Captures applied `tc` state; active calibration still required | Partial |
-| Throughput under fixed concurrency | Separate workload required | Not yet implemented |
-| CPU and peak memory | Batch/process collectors required | Not yet implemented |
-| Transport bytes/fragmentation | TLS BIO bytes implemented; packet capture still required | Partial |
-| Pure cryptographic microbenchmarks | ML-KEM and X25519 operation harness required | Not yet implemented |
-| Batch-aware uncertainty and autocorrelation | Confirmatory analysis module required after pilot | Not yet implemented |
+| CPU core/resource controls | Fixed-CPU/memory/PID Compose backend | Implemented; validate limits on target Docker host |
+| Independently verified network profile | `tc` state plus independent namespace ping calibration | Implemented; perform and retain calibration evidence per pilot profile |
+| Throughput under fixed concurrency | Separate `run-throughput.py` workload | Implemented |
+| CPU and peak memory | Per-cell child CPU/context-switch and Linux process-tree peak-RSS collector | Implemented; sampled peak RSS is evidence, not a profiler |
+| Transport bytes/fragmentation | TLS BIO counts plus namespace capture and `tshark` TCP payload parser | Implemented; capture must be started per selected cell |
+| Pure cryptographic microbenchmarks | ML-KEM keygen/encapsulation/decapsulation and X25519 keygen/derive harness | Implemented; run on target OpenSSL build |
+| Batch-aware uncertainty and autocorrelation | Completeness/integrity gate, batch bootstrap, lag-1 diagnostic, paired randomisation and Holm correction | Implemented |
 
 This table should be updated whenever the protocol or implementation changes.
 It prevents claims in the dissertation from exceeding what the artefact
 actually measures.
-

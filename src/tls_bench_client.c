@@ -2,6 +2,7 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <netdb.h>
 #include <openssl/err.h>
@@ -13,6 +14,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <poll.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -155,13 +157,15 @@ static long count_io(BIO *bio, int operation, const char *argp, size_t len,
     return ret;
 }
 
-static int connect_tcp(const options *opts)
+static int connect_tcp(const options *opts, bool *timed_out)
 {
     struct addrinfo hints = {0};
     struct addrinfo *addresses = NULL;
     struct addrinfo *address;
     struct timeval timeout;
     int socket_fd = -1;
+
+    *timed_out = false;
 
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
@@ -175,10 +179,30 @@ static int connect_tcp(const options *opts)
         socket_fd = socket(address->ai_family, address->ai_socktype,
                            address->ai_protocol);
         if (socket_fd < 0) continue;
+        int original_flags = fcntl(socket_fd, F_GETFL, 0);
+        if (original_flags < 0 || fcntl(socket_fd, F_SETFL, original_flags | O_NONBLOCK) != 0) {
+            close(socket_fd);
+            socket_fd = -1;
+            continue;
+        }
         setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
         setsockopt(socket_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
         if (connect(socket_fd, address->ai_addr, address->ai_addrlen) == 0) {
+            fcntl(socket_fd, F_SETFL, original_flags);
             break;
+        }
+        if (errno == EINPROGRESS) {
+            struct pollfd descriptor = {.fd = socket_fd, .events = POLLOUT};
+            int ready = poll(&descriptor, 1, (int)opts->timeout_ms);
+            int socket_error = 0;
+            socklen_t error_length = sizeof(socket_error);
+            if (ready > 0 && getsockopt(socket_fd, SOL_SOCKET, SO_ERROR,
+                                        &socket_error, &error_length) == 0 &&
+                socket_error == 0) {
+                fcntl(socket_fd, F_SETFL, original_flags);
+                break;
+            }
+            if (ready == 0) *timed_out = true;
         }
         close(socket_fd);
         socket_fd = -1;
@@ -258,11 +282,13 @@ static bool run_handshake(SSL_CTX *context, const options *opts,
     const char *phase = "tcp_connect";
     double latency_ms = -1.0;
     unsigned long error_code = 0;
+    bool tcp_timed_out = false;
 
     ERR_clear_error();
-    socket_fd = connect_tcp(opts);
+    socket_fd = connect_tcp(opts, &tcp_timed_out);
     utc_timestamp(timestamp);
     if (socket_fd < 0) {
+        if (tcp_timed_out) status = "timeout";
         if (recorded) {
             emit_result(opts, sequence, timestamp, status, phase, latency_ms,
                         NULL, NULL, &counts, 0);
@@ -289,6 +315,7 @@ static bool run_handshake(SSL_CTX *context, const options *opts,
     BIO_set_callback_ex(socket_bio, count_io);
 
     phase = "tls_handshake";
+    errno = 0;
     started = monotonic_ns();
     result = SSL_connect(ssl);
     finished = monotonic_ns();
@@ -305,7 +332,15 @@ static bool run_handshake(SSL_CTX *context, const options *opts,
             phase = "verification";
         }
     } else {
+        int ssl_error = SSL_get_error(ssl, result);
+        int system_error = errno;
         error_code = ERR_peek_last_error();
+        if ((ssl_error == SSL_ERROR_SYSCALL || ssl_error == SSL_ERROR_WANT_READ ||
+             ssl_error == SSL_ERROR_WANT_WRITE) &&
+            (system_error == EAGAIN || system_error == EWOULDBLOCK ||
+             system_error == ETIMEDOUT)) {
+            status = "timeout";
+        }
     }
 
     if (recorded) {
@@ -361,4 +396,3 @@ int main(int argc, char **argv)
     SSL_CTX_free(context);
     return EXIT_SUCCESS;
 }
-

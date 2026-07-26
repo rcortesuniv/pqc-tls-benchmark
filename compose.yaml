@@ -1,0 +1,38 @@
+services:
+  server:
+    image: ${PQC_BENCH_IMAGE:-pqc-tls-bench:3.5.7}
+    entrypoint:
+      - /opt/openssl/bin/openssl
+      - s_server
+      - -accept
+      - "4433"
+      - -tls1_3
+      - -groups
+      - X25519:MLKEM768:X25519MLKEM768
+      - -cert
+      - /certs/server.crt
+      - -key
+      - /certs/server.key
+      - -no_cache
+      - -quiet
+    volumes:
+      - ./certs:/certs:ro
+    networks: [pqcbench]
+    cpus: "1.0"
+    mem_limit: 1g
+    pids_limit: 256
+    cap_add: [NET_ADMIN]
+  client:
+    image: ${PQC_BENCH_IMAGE:-pqc-tls-bench:3.5.7}
+    entrypoint: [sleep, infinity]
+    volumes:
+      - ./certs:/certs:ro
+    networks: [pqcbench]
+    cpus: "1.0"
+    mem_limit: 1g
+    pids_limit: 256
+    cap_add: [NET_ADMIN]
+
+networks:
+  pqcbench:
+    driver: bridge

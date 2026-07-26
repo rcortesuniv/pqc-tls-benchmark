@@ -21,3 +21,6 @@ direction. The configured loss percentage is also applied independently in
 each direction, and is therefore described explicitly as
 `loss_percent_each_direction`.
 
+CPU time and peak RSS are cell-level process evidence, not part of the latency
+endpoint. Packet captures are collected and parsed separately; TCP payload
+bytes must not be conflated with the TLS socket-BIO byte counters.

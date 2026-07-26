@@ -11,7 +11,7 @@ handshakes are executed but never written to the definitive raw dataset.
 | `sequence` | integer | Recorded attempt order within the cell. |
 | `timestamp_utc` | string | UTC wall-clock timestamp for provenance. |
 | `requested_group` | string | Sole group offered by the client. |
-| `status` | string | `success`, `failed`, or `group_mismatch`. |
+| `status` | string | `success`, `failed`, `timeout`, or `group_mismatch`. |
 | `failure_phase` | string/null | `tcp_connect`, `ssl_initialise`, `tls_handshake`, `verification`, or null. |
 | `handshake_latency_ms` | number/null | Monotonic duration of `SSL_connect()` after TCP establishment. |
 | `negotiated_group` | string/null | Group reported by OpenSSL after a successful handshake. |
@@ -25,3 +25,8 @@ proposal's timing boundary starts only after TCP establishment. Analyses must
 state explicitly whether operational reliability includes these transport
 failures or uses only established-connection attempts.
 
+Per-cell execution evidence is held in `schedule.json`, rather than duplicated
+into every raw record: applied/observed netem state, command, duration, child
+CPU/context-switch deltas, observed process-tree peak RSS, raw SHA-256 and
+completion status. `integrity.json` covers the frozen schedule, provenance
+files and every raw JSONL file.

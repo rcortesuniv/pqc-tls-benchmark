@@ -58,7 +58,27 @@ class AnalysisTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 MODULE.load_observations(raw)
 
+    def test_confirmatory_analysis_is_batch_level_and_adjusted(self):
+        pairwise = [
+            {"batch_id": f"batch-{index:03d}", "rtt_ms": 0, "loss_percent_each_direction": 0.0,
+             "baseline_group": "X25519", "comparison_group": "X25519MLKEM768",
+             "comparison_minus_baseline_ms": 2.0, "failure_rate_delta": 0.0}
+            for index in range(1, 5)
+        ]
+        report = MODULE.confirmatory_analysis(
+            pairwise, {"analysis": {"seed": 1, "bootstrap_resamples": 100, "acceptance_thresholds_ms": [1.0, 2.0]}}
+        )
+        self.assertEqual(len(report), 1)
+        self.assertEqual(report[0]["n"], 4)
+        self.assertEqual(report[0]["mean"], 2.0)
+        self.assertEqual(report[0]["holm_adjusted_pvalue"], report[0]["permutation_pvalue"])
+        self.assertEqual(report[0]["acceptance_threshold_sensitivity"][0]["batches_at_or_below_threshold"], 0)
+
+    def test_validation_detects_duplicate_sequence(self):
+        row = observation("batch-001", "X25519__rtt-0ms__loss-0p0pct", "X25519", 0, 1.0)
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertTrue(MODULE.validate_dataset(pathlib.Path(directory), [row, dict(row)]))
+
 
 if __name__ == "__main__":
     unittest.main()
-

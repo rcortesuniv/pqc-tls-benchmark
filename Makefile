@@ -8,7 +8,7 @@ RPATH = -Wl,-rpath,$(OPENSSL_PREFIX)/lib64 -Wl,-rpath,$(OPENSSL_PREFIX)/lib
 
 .PHONY: all clean test
 
-all: build/tls_bench_client
+all: build/tls_bench_client build/pqc_microbench
 
 build:
 	mkdir -p build
@@ -16,9 +16,11 @@ build:
 build/tls_bench_client: src/tls_bench_client.c | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< -o $@ $(LDFLAGS) $(RPATH) $(LDLIBS)
 
+build/pqc_microbench: src/pqc_microbench.c | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< -o $@ $(LDFLAGS) $(RPATH) $(LDLIBS)
+
 test:
 	python3 -m unittest discover -s tests -v
 
 clean:
 	rm -rf build
-

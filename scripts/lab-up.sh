@@ -51,7 +51,23 @@ printf '%s\n' "${server_launcher_pid}" >"${runtime_dir}/server-launcher.pid"
 for _ in $(seq 1 40); do
   if sudo ip netns exec "${client_ns}" \
     bash -c 'exec 3<>/dev/tcp/10.203.0.2/4433' 2>/dev/null; then
-    echo "PQC TLS benchmark lab is ready."
+    for group in X25519 MLKEM768 X25519MLKEM768; do
+      if ! sudo ip netns exec "${client_ns}" \
+        "${project_dir}/build/tls_bench_client" \
+        --host 10.203.0.2 --port 4433 --server-name pqc-bench.local \
+        --ca-file "${project_dir}/certs/ca.crt" --group "${group}" \
+        --batch-id readiness --cell-id "readiness-${group}" \
+        --warmups 0 --attempts 1 --timeout-ms 5000 \
+        >"${runtime_dir}/readiness-${group}.jsonl"; then
+        echo "TLS readiness test failed for ${group}; inspect runtime/server.log." >&2
+        exit 1
+      fi
+      if ! grep -Fq '"status":"success"' "${runtime_dir}/readiness-${group}.jsonl"; then
+        echo "TLS group verification failed for ${group}; inspect readiness evidence." >&2
+        exit 1
+      fi
+    done
+    echo "PQC TLS benchmark lab is ready and all experimental groups were verified."
     exit 0
   fi
   sleep 0.1
@@ -59,4 +75,3 @@ done
 
 echo "Server did not become ready; inspect runtime/server.log." >&2
 exit 1
-

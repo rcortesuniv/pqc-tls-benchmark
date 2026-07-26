@@ -54,6 +54,15 @@ class OrchestratorTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 MODULE.load_config(pathlib.Path(stream.name))
 
+    def test_invalid_timeout_is_rejected(self):
+        invalid = json.loads(json.dumps(self.config))
+        invalid["execution"]["timeout_ms"] = 0
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as stream:
+            json.dump(invalid, stream)
+            stream.flush()
+            with self.assertRaises(ValueError):
+                MODULE.load_config(pathlib.Path(stream.name))
+
 
 if __name__ == "__main__":
     unittest.main()
