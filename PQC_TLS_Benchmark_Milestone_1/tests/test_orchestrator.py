@@ -1,0 +1,59 @@
+import importlib.util
+import json
+import pathlib
+import sys
+import tempfile
+import unittest
+
+
+PROJECT = pathlib.Path(__file__).resolve().parent.parent
+SPEC = importlib.util.spec_from_file_location(
+    "run_experiment", PROJECT / "scripts/run-experiment.py"
+)
+MODULE = importlib.util.module_from_spec(SPEC)
+assert SPEC.loader
+sys.modules[SPEC.name] = MODULE
+SPEC.loader.exec_module(MODULE)
+
+
+class OrchestratorTests(unittest.TestCase):
+    def setUp(self):
+        self.config = MODULE.load_config(PROJECT / "config/experiment.json")
+
+    def test_matrix_has_36_unique_cells(self):
+        cells = MODULE.cells_from_config(self.config)
+        self.assertEqual(len(cells), 36)
+        self.assertEqual(len({cell.identifier for cell in cells}), 36)
+
+    def test_schedule_is_complete_per_batch(self):
+        expected = {cell.identifier for cell in MODULE.cells_from_config(self.config)}
+        scheduled = MODULE.schedule(self.config)
+        for batch in range(1, self.config["execution"]["batches"] + 1):
+            actual = {cell.identifier for item_batch, cell in scheduled if item_batch == batch}
+            self.assertEqual(actual, expected)
+
+    def test_schedule_is_reproducible(self):
+        first = [(batch, cell.identifier) for batch, cell in MODULE.schedule(self.config)]
+        second = [(batch, cell.identifier) for batch, cell in MODULE.schedule(self.config)]
+        self.assertEqual(first, second)
+
+    def test_rtt_is_split_symmetrically(self):
+        cell = MODULE.Cell("X25519", 50, 0.5)
+        commands = MODULE.apply_netem(self.config, cell, dry_run=True)
+        self.assertEqual(len(commands), 2)
+        for command in commands:
+            self.assertIn("25ms", command)
+            self.assertIn("0.5%", command)
+
+    def test_invalid_duplicate_group_is_rejected(self):
+        invalid = dict(self.config)
+        invalid["groups"] = ["X25519", "X25519"]
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as stream:
+            json.dump(invalid, stream)
+            stream.flush()
+            with self.assertRaises(ValueError):
+                MODULE.load_config(pathlib.Path(stream.name))
+
+
+if __name__ == "__main__":
+    unittest.main()
