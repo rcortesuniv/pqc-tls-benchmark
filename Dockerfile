@@ -35,6 +35,7 @@ FROM ubuntu:24.04
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates iproute2 \
+    && mkdir -p /certs \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /opt/openssl /opt/openssl
 COPY --from=builder /usr/local/bin/tls_bench_client /usr/local/bin/tls_bench_client

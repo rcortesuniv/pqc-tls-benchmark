@@ -16,7 +16,7 @@ services:
       - -no_cache
       - -quiet
     volumes:
-      - ./certs:/certs:ro
+      - pqcbench-certs:/certs:ro
     networks: [pqcbench]
     cpus: "1.0"
     mem_limit: 1g
@@ -33,7 +33,7 @@ services:
     image: ${PQC_BENCH_IMAGE:-pqc-tls-bench:3.5.7}
     entrypoint: [sleep, infinity]
     volumes:
-      - ./certs:/certs:ro
+      - ./certs/ca.crt:/certs/ca.crt:ro
     networks: [pqcbench]
     cpus: "1.0"
     mem_limit: 1g
@@ -51,3 +51,7 @@ networks:
   pqcbench:
     driver: bridge
     internal: true
+
+volumes:
+  pqcbench-certs:
+    name: ${PQC_BENCH_CERT_VOLUME:-pqc-tls-bench-certs}
