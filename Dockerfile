@@ -9,13 +9,13 @@ RUN apt-get update \
 
 WORKDIR /tmp/openssl
 RUN curl --fail --location --proto '=https' --tlsv1.2 \
-      --output openssl.tar.gz \
+      --output "openssl-${OPENSSL_VERSION}.tar.gz" \
       "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
     && curl --fail --location --proto '=https' --tlsv1.2 \
-      --output openssl.tar.gz.sha256 \
+      --output "openssl-${OPENSSL_VERSION}.tar.gz.sha256" \
       "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz.sha256" \
-    && sha256sum --check openssl.tar.gz.sha256 \
-    && tar --extract --file openssl.tar.gz --strip-components=1 \
+    && sha256sum --check "openssl-${OPENSSL_VERSION}.tar.gz.sha256" \
+    && tar --extract --file "openssl-${OPENSSL_VERSION}.tar.gz" --strip-components=1 \
     && ./Configure linux-x86_64 shared --prefix=/opt/openssl --openssldir=/opt/openssl/ssl \
     && make -j"$(nproc)" \
     && make test \
