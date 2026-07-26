@@ -5,6 +5,14 @@ project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 openssl_bin="${OPENSSL_BIN:-/opt/openssl-3.5.7/bin/openssl}"
 cert_dir="${project_dir}/certs"
 
+if [[ ! -x "${openssl_bin}" ]]; then
+  openssl_bin="$(command -v openssl || true)"
+fi
+if [[ -z "${openssl_bin}" || ! -x "${openssl_bin}" ]]; then
+  echo "OpenSSL is required to generate the laboratory certificates." >&2
+  exit 1
+fi
+
 mkdir -p "${cert_dir}"
 "${openssl_bin}" req -x509 -newkey rsa:3072 -sha256 -nodes \
   -days 30 \
@@ -25,4 +33,3 @@ mkdir -p "${cert_dir}"
   -out "${cert_dir}/server.crt"
 rm "${cert_dir}/server.csr" "${cert_dir}/ca.srl"
 chmod 600 "${cert_dir}/ca.key" "${cert_dir}/server.key"
-
