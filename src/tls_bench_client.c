@@ -150,10 +150,18 @@ static long count_io(BIO *bio, int operation, const char *argp, size_t len,
     (void)argl;
 
     if (counts && (operation & BIO_CB_RETURN) && ret > 0 && processed) {
-        if (operation & BIO_CB_READ) {
+        /* BIO_CB_WRITE is 0x03 and therefore shares the BIO_CB_READ bit
+         * (0x02). Match the complete operation code: testing bit membership
+         * first would classify every successful write as a read. */
+        switch (operation & ~BIO_CB_RETURN) {
+        case BIO_CB_READ:
             counts->bytes_read += *processed;
-        } else if (operation & BIO_CB_WRITE) {
+            break;
+        case BIO_CB_WRITE:
             counts->bytes_written += *processed;
+            break;
+        default:
+            break;
         }
     }
     return ret;
@@ -271,7 +279,8 @@ static bool run_handshake(SSL_CTX *context, const options *opts,
                           unsigned sequence, bool recorded)
 {
     SSL *ssl = NULL;
-    BIO *socket_bio;
+    BIO *read_bio;
+    BIO *write_bio;
     io_counts counts = {0};
     int socket_fd;
     int result;
@@ -320,9 +329,14 @@ static bool run_handshake(SSL_CTX *context, const options *opts,
         return false;
     }
     SSL_set_session(ssl, NULL);
-    socket_bio = SSL_get_wbio(ssl);
-    BIO_set_callback_arg(socket_bio, (char *)&counts);
-    BIO_set_callback_ex(socket_bio, count_io);
+    read_bio = SSL_get_rbio(ssl);
+    write_bio = SSL_get_wbio(ssl);
+    BIO_set_callback_arg(read_bio, (char *)&counts);
+    BIO_set_callback_ex(read_bio, count_io);
+    if (write_bio != read_bio) {
+        BIO_set_callback_arg(write_bio, (char *)&counts);
+        BIO_set_callback_ex(write_bio, count_io);
+    }
 
     phase = "tls_handshake";
     errno = 0;
@@ -360,8 +374,12 @@ static bool run_handshake(SSL_CTX *context, const options *opts,
                     negotiated_group, cipher, &counts, error_code);
     }
 
-    BIO_set_callback_ex(socket_bio, NULL);
-    BIO_set_callback_arg(socket_bio, NULL);
+    BIO_set_callback_ex(read_bio, NULL);
+    BIO_set_callback_arg(read_bio, NULL);
+    if (write_bio != read_bio) {
+        BIO_set_callback_ex(write_bio, NULL);
+        BIO_set_callback_arg(write_bio, NULL);
+    }
     SSL_shutdown(ssl);
     SSL_free(ssl);
     close(socket_fd);

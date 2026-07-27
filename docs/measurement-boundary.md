@@ -13,8 +13,10 @@ The primary endpoint is measured in the custom C client:
 
 This excludes DNS and TCP setup from handshake latency while retaining setup
 failures separately. The socket BIO callback counts TLS record bytes crossing
-the OpenSSL/socket boundary. These are not Ethernet, IP or TCP byte counts; a
-packet-capture module will be needed when transport-layer attribution is added.
+the OpenSSL/socket boundary in each direction. These are not Ethernet, IP or
+TCP byte counts; a packet-capture module will be needed when transport-layer
+attribution is added. Successful handshakes with no recorded outbound TLS bytes
+are treated as an instrumentation failure by the validation gate.
 
 OpenSSL reports canonical group names in lowercase, whereas the configured
 CLI names use the conventional uppercase spelling. Verification therefore uses

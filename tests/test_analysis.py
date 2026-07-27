@@ -79,6 +79,13 @@ class AnalysisTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             self.assertTrue(MODULE.validate_dataset(pathlib.Path(directory), [row, dict(row)]))
 
+    def test_validation_rejects_missing_outbound_tls_byte_evidence(self):
+        row = observation("batch-001", "X25519__rtt-0ms__loss-0p0pct", "X25519", 0, 1.0)
+        row["tls_bytes_written"] = 0
+        with tempfile.TemporaryDirectory() as directory:
+            issues = MODULE.validate_dataset(pathlib.Path(directory), [row])
+        self.assertIn("no outbound TLS bytes were recorded for successful handshakes", issues)
+
 
 if __name__ == "__main__":
     unittest.main()
