@@ -1,0 +1,159 @@
+From 294d67362d8cd08885c45d25b77fb34f05361b28 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 27 Jul 2026 17:07:02 +0000
+Subject: [PATCH] Fix dashboard error surfacing, config validation, and usage
+ text
+
+- dashboard.py CLI now passes the analysis-refresh error into
+  dashboard_data() so the existing warning banner actually renders
+  instead of silently swallowing a failed summarise.py run.
+- run-experiment.py load_config() validates execution.pause_between_cells_ms
+  like its sibling execution keys instead of failing with a raw KeyError.
+- tls_bench_client.c usage() emits real newlines instead of literal
+  backslash-n from double-escaped string literals.
+
+Adds regression tests for the dashboard error path and the new
+config validation.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01CQufbTtRvqb5p2vEUR1RMA
+---
+ analysis/dashboard.py      | 12 +++++++-----
+ scripts/run-experiment.py  |  2 +-
+ src/tls_bench_client.c     | 12 ++++++------
+ tests/test_analysis.py     | 14 ++++++++++++++
+ tests/test_orchestrator.py | 18 ++++++++++++++++++
+ 5 files changed, 46 insertions(+), 12 deletions(-)
+
+diff --git a/analysis/dashboard.py b/analysis/dashboard.py
+index b3a71dd..2fc24a3 100644
+--- a/analysis/dashboard.py
++++ b/analysis/dashboard.py
+@@ -66,15 +66,18 @@ def refresh_analysis(result_dir: pathlib.Path) -> str | None:
+     return None
+ 
+ 
+-def dashboard_data(result_dir: pathlib.Path) -> dict[str, Any]:
++def dashboard_data(result_dir: pathlib.Path, analysis_error: str | None = None) -> dict[str, Any]:
+     analysis_dir = result_dir / "analysis"
+-    return {
++    data: dict[str, Any] = {
+         "run_name": result_dir.name,
+         "validation": load_json(analysis_dir / "validation.json", {}),
+         "summaries": load_csv(analysis_dir / "batch_cell_summary.csv"),
+         "primary_deltas": load_csv(analysis_dir / "primary_batch_deltas.csv"),
+         "confirmatory": load_json(analysis_dir / "confirmatory_analysis.json", {}).get("contrasts", []),
+     }
++    if analysis_error:
++        data["analysis_error"] = analysis_error
++    return data
+ 
+ 
+ def serialise_for_html(value: Any) -> str:
+@@ -216,11 +219,10 @@ def main() -> int:
+     args = parser.parse_args()
+     if not args.result_dir.is_dir():
+         parser.error("result_dir must be an existing result directory")
+-    if not args.no_refresh:
+-        refresh_analysis(args.result_dir)
++    analysis_error = None if args.no_refresh else refresh_analysis(args.result_dir)
+     output = args.output or args.result_dir / "analysis" / "dashboard.html"
+     output.parent.mkdir(parents=True, exist_ok=True)
+-    output.write_text(render_dashboard(dashboard_data(args.result_dir)), encoding="utf-8")
++    output.write_text(render_dashboard(dashboard_data(args.result_dir, analysis_error)), encoding="utf-8")
+     print(f"Dashboard written to {output}")
+     return 0
+ 
+diff --git a/scripts/run-experiment.py b/scripts/run-experiment.py
+index 6fa47ed..1f451ef 100755
+--- a/scripts/run-experiment.py
++++ b/scripts/run-experiment.py
+@@ -51,7 +51,7 @@ def load_config(path: pathlib.Path) -> dict[str, Any]:
+     if not isinstance(config["execution"].get("batches"), int) or config["execution"]["batches"] < 1:
+         raise ValueError("execution.batches must be at least 1")
+     execution = config["execution"]
+-    for key in ("warmup_handshakes_per_cell", "recorded_handshakes_per_cell", "timeout_ms"):
++    for key in ("warmup_handshakes_per_cell", "recorded_handshakes_per_cell", "timeout_ms", "pause_between_cells_ms"):
+         if isinstance(execution.get(key), bool) or not isinstance(execution.get(key), int) or execution[key] < 0:
+             raise ValueError(f"execution.{key} must be a non-negative integer")
+     if execution["recorded_handshakes_per_cell"] < 1:
+diff --git a/src/tls_bench_client.c b/src/tls_bench_client.c
+index 7ab3b5b..f3cb1b0 100644
+--- a/src/tls_bench_client.c
++++ b/src/tls_bench_client.c
+@@ -45,12 +45,12 @@ typedef struct {
+ static void usage(const char *program)
+ {
+     fprintf(stderr,
+-        "Usage: %s --host HOST --port PORT --server-name NAME --ca-file FILE\\n"
+-        "          --group GROUP --batch-id ID --cell-id ID [options]\\n"
+-        "Options:\\n"
+-        "  --attempts N    Recorded handshakes (default: 100)\\n"
+-        "  --warmups N     Unrecorded warm-up handshakes (default: 20)\\n"
+-        "  --timeout-ms N  Socket timeout in milliseconds (default: 10000)\\n",
++        "Usage: %s --host HOST --port PORT --server-name NAME --ca-file FILE\n"
++        "          --group GROUP --batch-id ID --cell-id ID [options]\n"
++        "Options:\n"
++        "  --attempts N    Recorded handshakes (default: 100)\n"
++        "  --warmups N     Unrecorded warm-up handshakes (default: 20)\n"
++        "  --timeout-ms N  Socket timeout in milliseconds (default: 10000)\n",
+         program);
+ }
+ 
+diff --git a/tests/test_analysis.py b/tests/test_analysis.py
+index e97479f..c830f67 100644
+--- a/tests/test_analysis.py
++++ b/tests/test_analysis.py
+@@ -140,6 +140,20 @@ class AnalysisTests(unittest.TestCase):
+         self.assertIn("reset-filters", page)
+         self.assertIn("filteredContrasts", page)
+ 
++    def test_dashboard_data_carries_analysis_error(self):
++        with tempfile.TemporaryDirectory() as directory:
++            result = pathlib.Path(directory)
++            (result / "analysis").mkdir()
++            data = DASHBOARD.dashboard_data(result, "summarise.py failed: boom")
++        self.assertEqual(data["analysis_error"], "summarise.py failed: boom")
++
++    def test_dashboard_data_omits_analysis_error_when_none(self):
++        with tempfile.TemporaryDirectory() as directory:
++            result = pathlib.Path(directory)
++            (result / "analysis").mkdir()
++            data = DASHBOARD.dashboard_data(result, None)
++        self.assertNotIn("analysis_error", data)
++
+     def test_dashboard_refresh_is_skipped_when_outputs_are_current(self):
+         with tempfile.TemporaryDirectory() as directory:
+             result = pathlib.Path(directory)
+diff --git a/tests/test_orchestrator.py b/tests/test_orchestrator.py
+index b893f78..2abbe3d 100644
+--- a/tests/test_orchestrator.py
++++ b/tests/test_orchestrator.py
+@@ -63,6 +63,24 @@ class OrchestratorTests(unittest.TestCase):
+             with self.assertRaises(ValueError):
+                 MODULE.load_config(pathlib.Path(stream.name))
+ 
++    def test_invalid_pause_between_cells_is_rejected(self):
++        invalid = json.loads(json.dumps(self.config))
++        invalid["execution"]["pause_between_cells_ms"] = -1
++        with tempfile.NamedTemporaryFile("w", suffix=".json") as stream:
++            json.dump(invalid, stream)
++            stream.flush()
++            with self.assertRaises(ValueError):
++                MODULE.load_config(pathlib.Path(stream.name))
++
++    def test_missing_pause_between_cells_is_rejected(self):
++        invalid = json.loads(json.dumps(self.config))
++        del invalid["execution"]["pause_between_cells_ms"]
++        with tempfile.NamedTemporaryFile("w", suffix=".json") as stream:
++            json.dump(invalid, stream)
++            stream.flush()
++            with self.assertRaises(ValueError):
++                MODULE.load_config(pathlib.Path(stream.name))
++
+     def test_unsafe_backend_identifier_is_rejected(self):
+         invalid = json.loads(json.dumps(self.config))
+         invalid["network_backend"]["client_namespace"] = "client namespace"
+-- 
+2.43.0
+

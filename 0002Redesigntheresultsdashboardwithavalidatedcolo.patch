@@ -1,0 +1,285 @@
+From bb7a647eb3bbfbec8f515cd5d2e390027367ae8c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 27 Jul 2026 17:07:02 +0000
+Subject: [PATCH] Redesign the results dashboard with a validated color system
+
+- Assign each TLS group a fixed categorical color (validated CVD-safe
+  against both light and dark surfaces) instead of one flat blue for
+  every bar, so identity is never lost across RTT/loss facets and
+  filtering never repaints survivors.
+- Add a legend, a proper hover/focus tooltip layer (value leads,
+  larger hit targets, keyboard-accessible), and theme-aware CSS custom
+  properties for light/dark instead of ad hoc hex and system colors.
+- Fix bar marks to spec: capped thickness, rounded data-end/square
+  baseline, nice-number axis ticks.
+- Suppress per-bar labels once the view holds more than 12 bars (the
+  full 36-condition view) to stop label collisions; the legend,
+  tooltip, and table below stay reachable and carry the same values.
+- Apply tabular-nums to table number columns.
+
+Verified with rendered screenshots (light/dark, hover, keyboard focus,
+dense view) and the dataviz skill's palette validator; all 21 existing
+tests plus new coverage for the legend/tooltip markup pass.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01CQufbTtRvqb5p2vEUR1RMA
+---
+ analysis/dashboard.py  | 195 ++++++++++++++++++++++++++++++++++++-----
+ tests/test_analysis.py |   3 +
+ 2 files changed, 176 insertions(+), 22 deletions(-)
+
+diff --git a/analysis/dashboard.py b/analysis/dashboard.py
+index 2fc24a3..ef9080c 100644
+--- a/analysis/dashboard.py
++++ b/analysis/dashboard.py
+@@ -94,26 +94,73 @@ def render_dashboard(data: dict[str, Any]) -> str:
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+ <title>PQC TLS benchmark — {title}</title>
+ <style>
+-:root {{ color-scheme: light dark; font-family: system-ui, sans-serif; }}
+-body {{ margin: 0; background: Canvas; color: CanvasText; }}
++:root {{
++  color-scheme: light dark;
++  --surface-1: #fcfcfb;
++  --page: #f9f9f7;
++  --text-primary: #0b0b0b;
++  --text-secondary: #52514e;
++  --text-muted: #898781;
++  --gridline: #e1e0d9;
++  --baseline: #c3c2b7;
++  --border: rgba(11,11,11,0.10);
++  --good: #006300;
++  --critical: #d03b3b;
++  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
++  --series-5: #e87ba4; --series-6: #008300; --series-7: #4a3aa7; --series-8: #e34948;
++}}
++@media (prefers-color-scheme: dark) {{
++  :root:where(:not([data-theme="light"])) {{
++    --surface-1: #1a1a19; --page: #0d0d0d; --text-primary: #ffffff; --text-secondary: #c3c2b7;
++    --text-muted: #898781; --gridline: #2c2c2a; --baseline: #383835; --border: rgba(255,255,255,0.10);
++    --good: #0ca30c; --critical: #e66767;
++    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
++    --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
++  }}
++}}
++:root[data-theme="dark"] {{
++  --surface-1: #1a1a19; --page: #0d0d0d; --text-primary: #ffffff; --text-secondary: #c3c2b7;
++  --text-muted: #898781; --gridline: #2c2c2a; --baseline: #383835; --border: rgba(255,255,255,0.10);
++  --good: #0ca30c; --critical: #e66767;
++  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
++  --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
++}}
++* {{ box-sizing: border-box; }}
++body {{ margin: 0; background: var(--page); color: var(--text-primary); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }}
+ main {{ max-width: 1280px; margin: auto; padding: 2rem; }}
+ h1 {{ margin-bottom: .25rem; }}
+-.muted {{ color: GrayText; }}
++h2 {{ font-size: 1.05rem; }}
++.muted {{ color: var(--text-secondary); }}
+ .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 1rem; margin: 1.25rem 0; }}
+-.card {{ border: 1px solid color-mix(in srgb, CanvasText 20%, transparent); border-radius: .5rem; padding: 1rem; }}
++.card {{ background: var(--surface-1); border: 1px solid var(--border); border-radius: .5rem; padding: 1rem; }}
+ .value {{ font-size: 1.7rem; font-weight: 650; }}
+-.ok {{ color: #147a3d; }} .bad {{ color: #b42318; }}
++.ok {{ color: var(--good); }} .bad {{ color: var(--critical); }}
+ .controls {{ display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; margin: 1.5rem 0; }}
+-label {{ display: grid; gap: .3rem; font-weight: 600; }}
+-select, button {{ min-width: 12rem; padding: .4rem; font: inherit; }}
++label {{ display: grid; gap: .3rem; font-weight: 600; font-size: .9rem; }}
++select, button {{ min-width: 12rem; padding: .45rem .6rem; font: inherit; border-radius: .4rem; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); }}
++button {{ min-width: unset; cursor: pointer; }}
+ section {{ margin-top: 2rem; }}
+-.chart-wrap {{ overflow-x: auto; border: 1px solid color-mix(in srgb, CanvasText 15%, transparent); border-radius: .5rem; padding: .5rem; }}
++.chart-wrap {{ position: relative; overflow-x: auto; background: var(--surface-1); border: 1px solid var(--border); border-radius: .5rem; padding: .5rem; }}
+ svg {{ display: block; min-width: 760px; width: 100%; }}
++#latency-chart .grid-line {{ stroke: var(--gridline); }}
++#latency-chart .axis-line {{ stroke: var(--baseline); }}
++#latency-chart .axis-text {{ fill: var(--text-muted); }}
++#latency-chart .value-label {{ fill: var(--text-primary); font-weight: 600; }}
++#latency-chart .condition-label {{ fill: var(--text-secondary); }}
++.legend {{ display: flex; flex-wrap: wrap; gap: 1rem; margin: .75rem .25rem 0; font-size: .85rem; color: var(--text-secondary); }}
++.legend-item {{ display: flex; align-items: center; gap: .4rem; }}
++.legend-swatch {{ width: 12px; height: 12px; border-radius: 2px; display: inline-block; flex: none; }}
++.viz-tooltip {{ position: fixed; pointer-events: none; background: var(--surface-1); border: 1px solid var(--border); border-radius: .4rem; padding: .45rem .65rem; box-shadow: 0 2px 12px rgba(0,0,0,.18); white-space: nowrap; z-index: 50; transform: translate(-50%, -100%); }}
++.viz-tooltip .tt-value {{ display: block; font-weight: 700; font-size: 1rem; color: var(--text-primary); }}
++.viz-tooltip .tt-label {{ color: var(--text-secondary); font-size: .8rem; }}
++.bar-hit {{ fill: transparent; cursor: pointer; }}
++.bar-hit:hover + .bar, .bar-hit:focus + .bar {{ filter: brightness(1.12); }}
++.bar-hit:focus {{ outline: none; }}
+ table {{ border-collapse: collapse; width: 100%; }}
+-th, td {{ border-bottom: 1px solid color-mix(in srgb, CanvasText 15%, transparent); padding: .55rem; text-align: left; }}
+-th {{ white-space: nowrap; }}
++th, td {{ border-bottom: 1px solid var(--gridline); padding: .55rem; text-align: left; }}
++th {{ white-space: nowrap; color: var(--text-secondary); font-weight: 600; }}
+ .number {{ text-align: right; font-variant-numeric: tabular-nums; }}
+-.notice {{ padding: .75rem 1rem; border-left: .3rem solid currentColor; background: color-mix(in srgb, CanvasText 6%, transparent); }}
++.notice {{ padding: .75rem 1rem; border-left: .3rem solid currentColor; background: color-mix(in srgb, currentColor 8%, transparent); border-radius: .25rem; }}
+ </style>
+ </head>
+ <body>
+@@ -136,8 +183,14 @@ th {{ white-space: nowrap; }}
+   <p id="analysis-warning" class="notice bad" hidden></p>
+   <section>
+     <h2>Median handshake latency</h2>
+-    <p class="muted">Each bar is the mean of available batch-cell medians for one selected condition. The initial view selects 50 ms RTT and 0% loss when those profiles exist.</p>
+-    <div class="chart-wrap"><svg id="latency-chart" viewBox="0 0 980 390" role="img" aria-label="Median handshake latency by group and network condition"></svg></div>
++    <p class="muted" id="chart-subtitle"></p>
++    <div class="chart-wrap">
++      <svg id="latency-chart" viewBox="0 0 980 390" role="img" aria-label="Median handshake latency by group and network condition"></svg>
++    </div>
++    <div id="chart-tooltip" class="viz-tooltip" role="status" aria-live="polite" hidden>
++      <span class="tt-value"></span><span class="tt-label"></span>
++    </div>
++    <div id="chart-legend" class="legend" aria-label="Group color legend" hidden></div>
+   </section>
+   <section>
+     <h2>Filtered condition summary</h2>
+@@ -166,6 +219,30 @@ const aggregate = rows => {{
+     return {{...first, batches:rows.length, median_latency_ms:rows.reduce((sum,row)=>sum+row.median_latency_ms,0)/rows.length, failure_rate:rows.reduce((sum,row)=>sum+row.failure_rate,0)/rows.length, median_tls_bytes_read:median(rows.map(row=>row.median_tls_bytes_read)), median_tls_bytes_written:median(rows.map(row=>row.median_tls_bytes_written))}};
+   }}).sort((a,b)=>a.rtt_ms-b.rtt_ms || a.loss_percent_each_direction-b.loss_percent_each_direction || a.group.localeCompare(b.group));
+ }};
++
++/* Color follows the entity, never its filtered rank: assign every group a fixed
++   palette slot once from the full dataset, so filtering never repaints survivors. */
++const PALETTE_SLOTS = 8;
++const allGroupsOrdered = [...new Set(summaries.map(row => row.group))].sort();
++const groupColorVar = new Map(allGroupsOrdered.map((group, index) => [group, `--series-${{(index % PALETTE_SLOTS) + 1}}`]));
++
++function niceNumber(range, round) {{
++  const exponent = Math.floor(Math.log10(range || 1));
++  const fraction = range / Math.pow(10, exponent);
++  const niceFraction = round
++    ? (fraction < 1.5 ? 1 : fraction < 3 ? 2 : fraction < 7 ? 5 : 10)
++    : (fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10);
++  return niceFraction * Math.pow(10, exponent);
++}}
++function niceTicks(maxValue, tickCount) {{
++  if (!(maxValue > 0)) return [0, 1];
++  const step = niceNumber(niceNumber(maxValue, false) / (tickCount - 1), true);
++  const niceMax = Math.ceil(maxValue / step) * step;
++  const ticks = [];
++  for (let value = 0; value <= niceMax + step / 2; value += step) ticks.push(Math.round(value * 1e6) / 1e6);
++  return ticks;
++}}
++
+ function fill(select, values, label) {{ select.innerHTML = `<option value="">All ${{label}}</option>` + values.map(value => `<option value="${{value}}">${{value}}</option>`).join(''); }}
+ const groupFilter=document.getElementById('group-filter'), rttFilter=document.getElementById('rtt-filter'), lossFilter=document.getElementById('loss-filter');
+ fill(groupFilter,[...new Set(summaries.map(row=>row.group))].sort(),'groups');
+@@ -179,17 +256,91 @@ function updateSummary(rows) {{
+   const body=document.querySelector('#summary-table tbody'); body.innerHTML='';
+   aggregate(rows).forEach(row => {{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${{row.group}}</td><td>${{row.rtt_ms}} ms</td><td>${{row.loss_percent_each_direction}}%</td><td class="number">${{row.batches}}</td><td class="number">${{fmt(row.median_latency_ms,3)}}</td><td class="number">${{fmt(row.failure_rate*100,2)}}%</td><td class="number">${{fmt(row.median_tls_bytes_read,0)}}</td><td class="number">${{fmt(row.median_tls_bytes_written,0)}}</td>`; body.appendChild(tr); }});
+ }}
++function conditionSubtitle(dense) {{
++  const parts = [];
++  if (groupFilter.value) parts.push(groupFilter.value);
++  parts.push(rttFilter.value ? rttFilter.value + ' RTT' : 'all RTT levels');
++  parts.push(lossFilter.value ? lossFilter.value + ' loss' : 'all loss levels');
++  const base = `Showing ${{parts.join(', ')}}. Each bar is the mean of available batch-cell medians for that condition.`;
++  return dense ? `${{base}} Too many conditions to label on the axis — hover or focus a bar for its value, or see the table below.` : base;
++}}
++function barLabel(row, rttActive, lossActive) {{
++  if (rttActive && lossActive) return row.group;
++  if (rttActive) return `${{row.group}} · ${{row.loss_percent_each_direction}}%`;
++  if (lossActive) return `${{row.group}} · ${{row.rtt_ms}} ms`;
++  return `${{row.group}} · ${{row.rtt_ms}} ms · ${{row.loss_percent_each_direction}}%`;
++}}
++function renderLegend(groups) {{
++  const legend = document.getElementById('chart-legend');
++  legend.textContent = '';
++  if (groups.length < 2) {{ legend.hidden = true; return; }}
++  legend.hidden = false;
++  groups.forEach(group => {{
++    const item = document.createElement('span'); item.className = 'legend-item';
++    const swatch = document.createElement('span'); swatch.className = 'legend-swatch';
++    swatch.style.background = `var(${{groupColorVar.get(group) || '--text-muted'}})`;
++    item.appendChild(swatch);
++    item.appendChild(document.createTextNode(group));
++    legend.appendChild(item);
++  }});
++}}
+ function updateChart(rows) {{
+-  const values=aggregate(rows), svg=document.getElementById('latency-chart');
+-  if (!values.length) {{ svg.innerHTML='<title>No matching data</title><text x="490" y="195" text-anchor="middle">No completed conditions match the selected filters.</text>'; return; }}
+-  const width=980, height=390, left=62, bottom=72, top=24, right=22, plotHeight=height-top-bottom, plotWidth=width-left-right;
+-  const max=Math.max(1,...values.map(row=>row.median_latency_ms));
+-  const ticks=[0,.25,.5,.75,1].map(fraction=>fraction*max);
++  const values=aggregate(rows), svg=document.getElementById('latency-chart'), tooltip=document.getElementById('chart-tooltip');
++  const dense = values.length > 12;
++  document.getElementById('chart-subtitle').textContent = conditionSubtitle(dense);
++  tooltip.hidden = true;
++  if (!values.length) {{
++    svg.innerHTML = '<title>No matching data</title><text x="490" y="195" text-anchor="middle" class="axis-text">No completed conditions match the selected filters.</text>';
++    renderLegend([]);
++    return;
++  }}
++  const rttActive = !!rttFilter.value, lossActive = !!lossFilter.value;
++  const width=980, height=390, left=56, bottom=78, top=24, right=16, plotHeight=height-top-bottom, plotWidth=width-left-right;
++  const ticks = niceTicks(Math.max(1,...values.map(row=>row.median_latency_ms)), 5);
++  const niceMax = ticks[ticks.length-1] || 1;
+   let marks=`<title>Mean batch-cell median handshake latency</title><desc>Filtered mean of batch-cell median handshake latency by group and network condition.</desc>`;
+-  ticks.forEach(value => {{ const y=top+plotHeight-(value/max)*plotHeight; marks+=`<line x1="${{left}}" y1="${{y}}" x2="${{width-right}}" y2="${{y}}" stroke="currentColor" opacity=".15"/><text x="${{left-8}}" y="${{y+4}}" text-anchor="end" font-size="12">${{fmt(value,0)}}</text>`; }});
+-  const slot=plotWidth/Math.max(values.length,1), barWidth=Math.min(42,slot*.65);
+-  values.forEach((row,index) => {{ const barHeight=(row.median_latency_ms/max)*plotHeight, x=left+slot*index+(slot-barWidth)/2, y=top+plotHeight-barHeight, label=`${{row.group}} · ${{row.rtt_ms}} ms · ${{row.loss_percent_each_direction}}%`; marks+=`<rect x="${{x}}" y="${{y}}" width="${{barWidth}}" height="${{barHeight}}" fill="#2878b5"><title>${{label}}: ${{fmt(row.median_latency_ms,3)}} ms</title></rect><text x="${{x+barWidth/2}}" y="${{y-6}}" text-anchor="middle" font-size="11">${{fmt(row.median_latency_ms,1)}}</text><text x="${{x+barWidth/2}}" y="${{height-16}}" text-anchor="end" transform="rotate(-45 ${{x+barWidth/2}} ${{height-16}})" font-size="11">${{label}}</text>`; }});
+-  marks+=`<line x1="${{left}}" y1="${{top+plotHeight}}" x2="${{width-right}}" y2="${{top+plotHeight}}" stroke="currentColor"/><text x="14" y="18" font-size="12">ms</text>`; svg.innerHTML=marks;
++  ticks.forEach(value => {{ const y=top+plotHeight-(value/niceMax)*plotHeight; marks+=`<line class="grid-line" x1="${{left}}" y1="${{y}}" x2="${{width-right}}" y2="${{y}}"/><text class="axis-text" x="${{left-8}}" y="${{y+4}}" text-anchor="end" font-size="12">${{fmt(value,0)}}</text>`; }});
++  const slot=plotWidth/values.length, barWidth=Math.min(24,slot*.6);
++  const barData = [];
++  values.forEach((row,index) => {{
++    const barHeight=(row.median_latency_ms/niceMax)*plotHeight;
++    const x=left+slot*index+(slot-barWidth)/2, yTop=top+plotHeight-barHeight, yBottom=top+plotHeight;
++    const radius=Math.max(0,Math.min(4,barHeight/2,barWidth/2));
++    const colorVar=groupColorVar.get(row.group) || '--text-muted';
++    const label=barLabel(row, rttActive, lossActive);
++    const barPath = radius > 0
++      ? `M${{x+radius}},${{yTop}} L${{x+barWidth-radius}},${{yTop}} Q${{x+barWidth}},${{yTop}} ${{x+barWidth}},${{yTop+radius}} L${{x+barWidth}},${{yBottom}} L${{x}},${{yBottom}} L${{x}},${{yTop+radius}} Q${{x}},${{yTop}} ${{x+radius}},${{yTop}} Z`
++      : `M${{x}},${{yTop}} L${{x+barWidth}},${{yTop}} L${{x+barWidth}},${{yBottom}} L${{x}},${{yBottom}} Z`;
++    marks+=`<rect class="bar-hit" tabindex="0" role="img" aria-label="${{label}}: ${{fmt(row.median_latency_ms,3)}} ms" x="${{left+slot*index}}" y="${{top}}" width="${{slot}}" height="${{plotHeight}}"/>`;
++    marks+=`<path class="bar" style="fill:var(${{colorVar}})" d="${{barPath}}"/>`;
++    if (!dense) {{
++      if (barHeight > 14) marks+=`<text class="value-label" x="${{x+barWidth/2}}" y="${{yTop-6}}" text-anchor="middle" font-size="11">${{fmt(row.median_latency_ms,1)}}</text>`;
++      marks += label.includes('·')
++        ? `<text class="condition-label" x="${{x+barWidth/2}}" y="${{height-16}}" text-anchor="end" transform="rotate(-45 ${{x+barWidth/2}} ${{height-16}})" font-size="11">${{label}}</text>`
++        : `<text class="condition-label" x="${{x+barWidth/2}}" y="${{height-16}}" text-anchor="middle" font-size="12">${{label}}</text>`;
++    }}
++    barData.push(row);
++  }});
++  marks+=`<line class="axis-line" x1="${{left}}" y1="${{top+plotHeight}}" x2="${{width-right}}" y2="${{top+plotHeight}}"/><text class="axis-text" x="14" y="18" font-size="12">ms</text>`;
++  svg.innerHTML=marks;
++  svg.querySelectorAll('.bar-hit').forEach((hit,index) => {{
++    const row = barData[index];
++    const show = () => {{
++      const hitRect=hit.getBoundingClientRect();
++      tooltip.querySelector('.tt-value').textContent = `${{fmt(row.median_latency_ms,3)}} ms`;
++      tooltip.querySelector('.tt-label').textContent = `${{row.group}} · ${{row.rtt_ms}} ms RTT · ${{row.loss_percent_each_direction}}% loss`;
++      tooltip.hidden = false;
++      tooltip.style.left = `${{hitRect.left+hitRect.width/2}}px`;
++      tooltip.style.top = `${{Math.max(8,hitRect.top-4)}}px`;
++    }};
++    const hide = () => {{ tooltip.hidden = true; }};
++    hit.addEventListener('pointerenter', show);
++    hit.addEventListener('pointermove', show);
++    hit.addEventListener('focus', show);
++    hit.addEventListener('pointerleave', hide);
++    hit.addEventListener('blur', hide);
++  }});
++  renderLegend([...new Set(barData.map(row=>row.group))]);
+ }}
+ function filteredContrasts() {{ return (data.confirmatory||[]).filter(row => (!groupFilter.value || row.baseline_group===groupFilter.value || row.comparison_group===groupFilter.value) && (!rttFilter.value || `${{row.rtt_ms}} ms`===rttFilter.value) && (!lossFilter.value || `${{row.loss_percent_each_direction}}%`===lossFilter.value)); }}
+ function updateContrasts() {{
+diff --git a/tests/test_analysis.py b/tests/test_analysis.py
+index c830f67..668a9a7 100644
+--- a/tests/test_analysis.py
++++ b/tests/test_analysis.py
+@@ -139,6 +139,9 @@ class AnalysisTests(unittest.TestCase):
+         self.assertIn("demo-run", page)
+         self.assertIn("reset-filters", page)
+         self.assertIn("filteredContrasts", page)
++        self.assertIn("chart-legend", page)
++        self.assertIn("chart-tooltip", page)
++        self.assertIn("groupColorVar", page)
+ 
+     def test_dashboard_data_carries_analysis_error(self):
+         with tempfile.TemporaryDirectory() as directory:
+-- 
+2.43.0
+
