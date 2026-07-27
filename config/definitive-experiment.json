@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0",
+  "experiment_id": "pqc-tls-definitive",
+  "seed": 20260727,
+  "groups": ["X25519", "MLKEM768", "X25519MLKEM768"],
+  "network": {
+    "rtt_ms": [0, 20, 50, 100],
+    "loss_percent_each_direction": [0.0, 0.5, 1.0]
+  },
+  "execution": {
+    "batches": 20,
+    "warmup_handshakes_per_cell": 20,
+    "recorded_handshakes_per_cell": 100,
+    "timeout_ms": 10000,
+    "pause_between_cells_ms": 250
+  },
+  "analysis": {
+    "seed": 20260727,
+    "bootstrap_resamples": 10000,
+    "acceptance_thresholds_ms": [1.0, 5.0, 10.0],
+    "primary_comparison": {
+      "baseline_group": "X25519",
+      "comparison_group": "X25519MLKEM768",
+      "rtt_ms": 50,
+      "loss_percent_each_direction": 0.0
+    },
+    "scope": "One pre-specified primary contrast; the remaining conditions and comparisons are exploratory."
+  },
+  "endpoint": {
+    "host": "10.203.0.2",
+    "port": 4433,
+    "server_name": "pqc-bench.local",
+    "ca_file": "certs/ca.crt"
+  },
+  "software": {
+    "openssl_version": "3.5.7",
+    "openssl_bin": "/opt/openssl-3.5.7/bin/openssl"
+  },
+  "network_backend": {
+    "type": "netns",
+    "client_namespace": "pqcbench-client",
+    "server_namespace": "pqcbench-server",
+    "client_interface": "pqcbench-c",
+    "server_interface": "pqcbench-s"
+  },
+  "container_backend": {
+    "compose_file": "compose.yaml",
+    "client_service": "client",
+    "server_service": "server",
+    "cpu_limit": "1.0",
+    "memory_limit": "1g",
+    "pids_limit": 256
+  }
+}

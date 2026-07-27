@@ -34,7 +34,7 @@ RUN cc -O2 -g -std=c11 -Wall -Wextra -Wpedantic \
 FROM ubuntu:24.04
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates iproute2 \
+    && apt-get install -y --no-install-recommends ca-certificates iproute2 iputils-ping \
     && mkdir -p /certs \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /opt/openssl /opt/openssl

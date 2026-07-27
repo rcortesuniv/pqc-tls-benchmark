@@ -184,6 +184,15 @@ diagnostics, paired sign-randomisation tests and Holm adjustment. It fails if
 the frozen schedule is incomplete, raw records are duplicated/impossible, or
 an integrity hash no longer matches.
 
+`batch_cell_summary.csv` includes p95 and p99 latency in addition to the
+median, mean and dispersion fields. Use these tail measures when interpreting
+loss, since a cell median can remain stable while a minority of handshakes
+retransmit.
+
+The draft definitive configuration and its freeze/calibration checklist are in
+[`docs/definitive-run.md`](docs/definitive-run.md). It deliberately keeps the
+existing pilot results separate from a future confirmatory collection.
+
 ## Explore results in a browser
 
 Generate a self-contained dashboard after collection:
