@@ -337,13 +337,23 @@ def write_csv(path: pathlib.Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
-def pooled_tail_summary(observations: list[dict[str, Any]], config: dict[str, Any], resamples: int = 500) -> list[dict[str, Any]]:
-    """Pooled per-condition tail quantiles with a block (cluster) bootstrap CI.
+def pooled_tail_summary(observations: list[dict[str, Any]], config: dict[str, Any], resamples: int = 5000) -> list[dict[str, Any]]:
+    """Pooled per-condition tail quantiles with block, plain and two-stage bootstrap CIs.
 
-    Handshakes within a batch share a netem loss realisation, so a block
-    bootstrap resamples whole batches (keeping their handshakes intact) rather
-    than resampling individual handshakes. This captures batch-level clustering
-    without assuming within-batch correlation.
+    Three p99 interval schemes are reported so the choice of tail estimator is
+    evidence-based rather than presumptive:
+
+      * block (cluster) bootstrap - resamples whole batches, preserving the
+        within-batch netem loss realisation; the primary tail estimator.
+      * plain pooled bootstrap - resamples individual handshakes, ignoring the
+        batch clustering; a naive comparator.
+      * two-stage bootstrap - resamples batches, then handshakes within each
+        resampled batch; a conservative sensitivity that additionally captures
+        any within-batch loss correlation.
+
+    Handshakes within a batch share a netem loss realisation, so the block
+    bootstrap is the primary estimator; the plain and two-stage schemes are
+    reported as comparators/sensitivity.
     """
     settings = config.get("analysis", {})
     seed = int(settings.get("seed", 0))
@@ -367,13 +377,38 @@ def pooled_tail_summary(observations: list[dict[str, Any]], config: dict[str, An
         draws.sort()
         return (percentile(draws, 0.025), percentile(draws, 0.975))
 
+    def plain_ci(pooled: list[float], proportion: float) -> tuple[float, float]:
+        if len(pooled) < 2:
+            return (math.nan, math.nan)
+        draws = [percentile(rng.choices(pooled, k=len(pooled)), proportion) for _ in range(resamples)]
+        draws.sort()
+        return (percentile(draws, 0.025), percentile(draws, 0.975))
+
+    def two_stage_ci(batch_latencies: list[list[float]], proportion: float) -> tuple[float, float]:
+        n_batches = len(batch_latencies)
+        if n_batches < 2:
+            return (math.nan, math.nan)
+        draws: list[float] = []
+        for _ in range(resamples):
+            pool: list[float] = []
+            for i in (rng.randrange(n_batches) for _ in range(n_batches)):
+                src = batch_latencies[i]
+                pool.extend(rng.choices(src, k=len(src)))
+            draws.append(percentile(pool, proportion))
+        draws.sort()
+        return (percentile(draws, 0.025), percentile(draws, 0.975))
+
     out: list[dict[str, Any]] = []
     for (group, rtt_ms, loss_percent), batches in sorted(grouped.items()):
         batch_latencies = list(batches.values())
         pooled = [value for latencies in batch_latencies for value in latencies]
         if not pooled:
             continue
+        # Block is computed first so its rng draw sequence is unchanged, keeping
+        # the primary estimator reproducible; plain and two-stage draw afterwards.
         ci99 = block_ci(batch_latencies, 0.99)
+        plain99 = plain_ci(pooled, 0.99)
+        twostage99 = two_stage_ci(batch_latencies, 0.99)
         out.append({
             "group": group,
             "rtt_ms": rtt_ms,
@@ -384,6 +419,10 @@ def pooled_tail_summary(observations: list[dict[str, Any]], config: dict[str, An
             "pooled_p99_ms": percentile(pooled, 0.99),
             "p99_block_ci95_low_ms": ci99[0],
             "p99_block_ci95_high_ms": ci99[1],
+            "p99_plain_ci95_low_ms": plain99[0],
+            "p99_plain_ci95_high_ms": plain99[1],
+            "p99_twostage_ci95_low_ms": twostage99[0],
+            "p99_twostage_ci95_high_ms": twostage99[1],
         })
     return out
 
