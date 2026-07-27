@@ -28,5 +28,10 @@ failures or uses only established-connection attempts.
 Per-cell execution evidence is held in `schedule.json`, rather than duplicated
 into every raw record: applied/observed netem state, command, duration, child
 CPU/context-switch deltas, observed process-tree peak RSS, raw SHA-256 and
-completion status. `integrity.json` covers the frozen schedule, provenance
-files and every raw JSONL file.
+completion status. A cell moves through `pending`, `running` and `completed`;
+an interrupted cell is recorded as `interrupted` with a timestamp and, when
+available, a hash and path for its partial evidence. Completed-cell JSONL files
+appear only in `raw/`. Partial output remains in `interrupted/` and is never
+included in confirmatory summaries. `resume.json` records each guarded resume
+event. `integrity.json` covers the frozen schedule, provenance files, resume
+evidence, completed raw files and retained interrupted output.
