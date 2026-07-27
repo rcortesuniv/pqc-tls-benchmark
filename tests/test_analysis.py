@@ -64,6 +64,8 @@ class AnalysisTests(unittest.TestCase):
             observation("batch-001", hybrid_cell, "X25519MLKEM768", 1, 62.0),
         ]
         summaries = MODULE.grouped_summary(rows)
+        self.assertAlmostEqual(summaries[0]["p95_latency_ms"], 61.9)
+        self.assertAlmostEqual(summaries[0]["p99_latency_ms"], 61.98)
         deltas = MODULE.primary_deltas(summaries)
         self.assertEqual(len(deltas), 1)
         self.assertAlmostEqual(deltas[0]["hybrid_minus_x25519_ms"], 10.0)
@@ -91,6 +93,26 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(report[0]["mean"], 2.0)
         self.assertEqual(report[0]["holm_adjusted_pvalue"], report[0]["permutation_pvalue"])
         self.assertEqual(report[0]["acceptance_threshold_sensitivity"][0]["batches_at_or_below_threshold"], 0)
+
+    def test_prespecified_primary_contrast_has_no_holm_adjustment(self):
+        pairwise = [
+            {"batch_id": f"batch-{index:03d}", "rtt_ms": 50, "loss_percent_each_direction": 0.0,
+             "baseline_group": "X25519", "comparison_group": "X25519MLKEM768",
+             "comparison_minus_baseline_ms": 0.2, "failure_rate_delta": 0.0}
+            for index in range(1, 5)
+        ]
+        report = MODULE.primary_contrast_analysis(pairwise, {"analysis": {
+            "seed": 1, "bootstrap_resamples": 100,
+            "primary_comparison": {
+                "baseline_group": "X25519", "comparison_group": "X25519MLKEM768",
+                "rtt_ms": 50, "loss_percent_each_direction": 0.0,
+            },
+        }})
+        self.assertIsNotNone(report)
+        assert report is not None
+        self.assertEqual(report["n"], 4)
+        self.assertEqual(report["mean"], 0.2)
+        self.assertEqual(report["multiplicity_adjustment"], "none: one pre-specified primary comparison")
 
     def test_validation_detects_duplicate_sequence(self):
         row = observation("batch-001", "X25519__rtt-0ms__loss-0p0pct", "X25519", 0, 1.0)

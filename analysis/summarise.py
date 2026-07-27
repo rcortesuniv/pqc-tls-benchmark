@@ -98,6 +98,8 @@ def grouped_summary(observations: Iterable[dict[str, Any]]) -> list[dict[str, An
                 "sd_latency_ms": statistics.stdev(latencies) if len(latencies) > 1 else math.nan,
                 "q1_latency_ms": percentile(latencies, 0.25),
                 "q3_latency_ms": percentile(latencies, 0.75),
+                "p95_latency_ms": percentile(latencies, 0.95),
+                "p99_latency_ms": percentile(latencies, 0.99),
                 "median_tls_bytes_read": statistics.median(bytes_read) if bytes_read else math.nan,
                 "median_tls_bytes_written": statistics.median(bytes_written) if bytes_written else math.nan,
             }
@@ -295,6 +297,37 @@ def confirmatory_analysis(pairwise: list[dict[str, Any]], config: dict[str, Any]
     return result
 
 
+def primary_contrast_analysis(pairwise: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, Any] | None:
+    """Analyse one pre-specified comparison without applying exploratory multiplicity control."""
+    primary = config.get("analysis", {}).get("primary_comparison")
+    if not isinstance(primary, dict):
+        return None
+    required = ("baseline_group", "comparison_group", "rtt_ms", "loss_percent_each_direction")
+    if any(key not in primary for key in required):
+        return None
+    values = [
+        float(row["comparison_minus_baseline_ms"])
+        for row in pairwise
+        if row["baseline_group"] == primary["baseline_group"]
+        and row["comparison_group"] == primary["comparison_group"]
+        and float(row["rtt_ms"]) == float(primary["rtt_ms"])
+        and float(row["loss_percent_each_direction"]) == float(primary["loss_percent_each_direction"])
+    ]
+    settings = config.get("analysis", {})
+    report = dict(primary)
+    report.update(
+        bootstrap_mean_interval(
+            values,
+            resamples=int(settings.get("bootstrap_resamples", 5000)),
+            seed=int(settings.get("seed", 0)),
+        )
+    )
+    report["permutation_pvalue"] = sign_permutation_pvalue(values)
+    report["lag1_autocorrelation"] = lag1_autocorrelation(values)
+    report["multiplicity_adjustment"] = "none: one pre-specified primary comparison"
+    return report
+
+
 def write_csv(path: pathlib.Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
@@ -320,6 +353,7 @@ def main() -> int:
     config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
     validation_issues = validate_dataset(args.result_dir, observations)
     confirmatory = confirmatory_analysis(all_pairwise, config)
+    primary_contrast = primary_contrast_analysis(all_pairwise, config)
     write_csv(analysis_dir / "batch_cell_summary.csv", summaries)
     write_csv(analysis_dir / "primary_batch_deltas.csv", deltas)
     write_csv(analysis_dir / "pairwise_batch_deltas.csv", all_pairwise)
@@ -347,6 +381,7 @@ def main() -> int:
             {
                 "method": "batch-level percentile bootstrap intervals; paired sign randomisation tests with Holm adjustment",
                 "bootstrap_resamples": config.get("analysis", {}).get("bootstrap_resamples", 5000),
+                "primary_contrast": primary_contrast,
                 "contrasts": confirmatory,
             },
             indent=2,
