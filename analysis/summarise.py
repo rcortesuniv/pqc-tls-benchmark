@@ -337,6 +337,57 @@ def write_csv(path: pathlib.Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
+def pooled_tail_summary(observations: list[dict[str, Any]], config: dict[str, Any], resamples: int = 500) -> list[dict[str, Any]]:
+    """Pooled per-condition tail quantiles with a block (cluster) bootstrap CI.
+
+    Handshakes within a batch share a netem loss realisation, so a block
+    bootstrap resamples whole batches (keeping their handshakes intact) rather
+    than resampling individual handshakes. This captures batch-level clustering
+    without assuming within-batch correlation.
+    """
+    settings = config.get("analysis", {})
+    seed = int(settings.get("seed", 0))
+    resamples = int(settings.get("pooled_tail_bootstrap_resamples", resamples))
+    rng = random.Random(seed)
+    grouped: dict[tuple[str, int, float], dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    for row in observations:
+        if row["status"] != "success":
+            continue
+        rtt_ms, loss_percent = parse_cell(row["cell_id"])
+        grouped[(row["requested_group"], rtt_ms, loss_percent)][row["batch_id"]].append(float(row["handshake_latency_ms"]))
+
+    def block_ci(batch_latencies: list[list[float]], proportion: float) -> tuple[float, float]:
+        n_batches = len(batch_latencies)
+        if n_batches < 2:
+            return (math.nan, math.nan)
+        draws: list[float] = []
+        for _ in range(resamples):
+            pool = [value for i in (rng.randrange(n_batches) for _ in range(n_batches)) for value in batch_latencies[i]]
+            draws.append(percentile(pool, proportion))
+        draws.sort()
+        return (percentile(draws, 0.025), percentile(draws, 0.975))
+
+    out: list[dict[str, Any]] = []
+    for (group, rtt_ms, loss_percent), batches in sorted(grouped.items()):
+        batch_latencies = list(batches.values())
+        pooled = [value for latencies in batch_latencies for value in latencies]
+        if not pooled:
+            continue
+        ci99 = block_ci(batch_latencies, 0.99)
+        out.append({
+            "group": group,
+            "rtt_ms": rtt_ms,
+            "loss_percent_each_direction": loss_percent,
+            "n_handshakes": len(pooled),
+            "n_batches": len(batch_latencies),
+            "pooled_p95_ms": percentile(pooled, 0.95),
+            "pooled_p99_ms": percentile(pooled, 0.99),
+            "p99_block_ci95_low_ms": ci99[0],
+            "p99_block_ci95_high_ms": ci99[1],
+        })
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("result_dir", type=pathlib.Path)
@@ -357,6 +408,8 @@ def main() -> int:
     write_csv(analysis_dir / "batch_cell_summary.csv", summaries)
     write_csv(analysis_dir / "primary_batch_deltas.csv", deltas)
     write_csv(analysis_dir / "pairwise_batch_deltas.csv", all_pairwise)
+    pooled_tail = pooled_tail_summary(observations, config)
+    write_csv(analysis_dir / "pooled_tail_summary.csv", pooled_tail)
 
     report = {
         "observations": len(observations),
