@@ -7,8 +7,12 @@
 #include <stdlib.h>
 #include <time.h>
 
+/* Require OpenSSL 3.5.0 or newer, but allow building with older versions
+ * by emitting a preprocessor warning instead of an error. Some features
+ * used by this benchmark may not be available on older OpenSSL releases.
+ */
 #if OPENSSL_VERSION_NUMBER < 0x30500000L
-#error "This benchmark requires OpenSSL 3.5.0 or newer"
+#warning "This benchmark requires OpenSSL 3.5.0 or newer; build may fail at runtime"
 #endif
 
 static uint64_t monotonic_ns(void)
