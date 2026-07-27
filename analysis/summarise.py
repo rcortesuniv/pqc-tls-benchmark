@@ -233,6 +233,9 @@ def validate_dataset(result_dir: pathlib.Path, observations: list[dict[str, Any]
             issues.append(f"invalid successful latency: {identity}")
         if any(not isinstance(row[field], int) or row[field] < 0 for field in ("tls_bytes_read", "tls_bytes_written")):
             issues.append(f"invalid TLS byte count: {identity}")
+    successful = [row for row in observations if row["status"] == "success"]
+    if successful and all(row["tls_bytes_written"] == 0 for row in successful):
+        issues.append("no outbound TLS bytes were recorded for successful handshakes")
     integrity_path = result_dir / "integrity.json"
     if integrity_path.exists():
         expected = json.loads(integrity_path.read_text(encoding="utf-8"))
