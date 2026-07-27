@@ -184,6 +184,20 @@ diagnostics, paired sign-randomisation tests and Holm adjustment. It fails if
 the frozen schedule is incomplete, raw records are duplicated/impossible, or
 an integrity hash no longer matches.
 
+## Explore results in a browser
+
+Generate a self-contained dashboard after collection:
+
+```bash
+analysis/dashboard.py results/pqc-tls-pilot-20260727T100719Z
+```
+
+It writes `analysis/dashboard.html` within that result directory and provides
+interactive group, RTT and loss filters, latency charts, directional byte
+summaries and batch-aware contrast outputs. See
+[`docs/results-dashboard.md`](docs/results-dashboard.md) for Codespaces viewing
+instructions.
+
 ## Explanatory workloads
 
 Run fixed-concurrency throughput separately from latency collection:
