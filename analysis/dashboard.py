@@ -133,12 +133,12 @@ section{margin-top:2rem}
 section h2{font-size:1.05rem;margin:0 0 .2rem;font-weight:650;letter-spacing:-.01em}
 section .desc{color:var(--muted);font-size:.84rem;margin:0 0 .9rem}
 section .count{color:var(--muted);font-weight:400}
-.charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.25rem}
+.charts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(500px,1fr));gap:1.25rem}
 @media(max-width:880px){.charts-grid{grid-template-columns:1fr}}
 .panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);overflow:hidden}
 .panel .body{padding:1rem 1rem 1.1rem}
 .chart-scroll{overflow-x:auto}
-svg.chart{display:block;width:100%;height:auto;min-width:560px}
+svg.chart{display:block;width:100%;height:auto;min-width:500px}
 svg.chart .grid{stroke:var(--grid);stroke-width:1}
 svg.chart .axis{stroke:var(--border);stroke-width:1}
 svg.chart .tk{fill:var(--muted);font-size:11px;font-family:var(--font)}
@@ -181,7 +181,7 @@ footer{color:var(--muted);font-size:.78rem;text-align:center;padding:2.5rem 1rem
     <div class="card" id="hero" hidden></div>
     <div class="card" id="hero-side">
       <div class="eyebrow">Reading guide</div>
-      <p class="desc" style="margin-top:.4rem;margin-bottom:0">Bars and lines use one colour per key-exchange group. The primary contrast reports the pre-specified hybrid-versus-classical comparison at 50 ms RTT and 0% loss with no multiplicity adjustment; every other contrast is exploratory and Holm-adjusted. Tail percentiles under loss are batch-median order statistics and are unstable at 0.5% loss — read the shape, not the exact level.</p>
+      <ul class="desc reading-guide-list" style="margin:.4rem 0 0;padding-left:1.1rem;list-style:disc"><li><strong>Colour coding — </strong>one colour per key-exchange group, used consistently across all charts.</li><li style="margin-top:.5rem"><strong>Primary contrast — </strong>the pre-specified hybrid-vs-classical comparison at 50 ms RTT, 0% loss, with no multiplicity adjustment. Every other contrast shown is exploratory and Holm-adjusted.</li><li style="margin-top:.5rem"><strong>Tail percentiles under loss — </strong>batch-median order statistics; unstable at 0.5% loss. Read the shape, not the exact level.</li></ul>
     </div>
   </div>
   <div class="toolbar" role="group" aria-label="Dashboard filters">
@@ -257,7 +257,7 @@ function pick(sel,pref){const opts=[...sel.options];sel.value=opts.some(o=>o.val
 function reset(){gf.value="";pick(rf,50);pick(lf,0);update();}
 function visCells(){return cells.filter(c=>(!gf.value||c.group===gf.value)&&(!rf.value||c.rtt===+rf.value)&&(!lf.value||c.loss===+lf.value));}
 function niceStep(range){const r=range||1;const exp=Math.floor(Math.log10(r));const f=r/Math.pow(10,exp);let nf=f<1.5?1:f<3?2:f<7?5:10;return nf*Math.pow(10,exp);}
-function ticks(min,max,count){if(!Number.isFinite(min)||!Number.isFinite(max))return [];if(min===max){max=min+1;}const step=niceStep(max-min);const start=Math.floor(min/step)*step;const out=[];for(let v=start;v<=max+step*0.5;v+=step)out.push(+v.toFixed(10));return out;}
+function ticks(min,max,count){if(!Number.isFinite(min)||!Number.isFinite(max))return [];if(min===max){max=min+1;}const step=niceStep((max-min)/(count||6));const start=Math.floor(min/step)*step;const out=[];for(let v=start;v<=max+step*0.5;v+=step)out.push(+v.toFixed(10));return out;}
 function lineChart(series,w,h,xLabel,yLabel){
   const m={l:56,r:20,t:18,b:48}; const pw=w-m.l-m.r, ph=h-m.t-m.b;
   const pts=[].concat(...series.map(s=>s.pts.filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y))));
@@ -273,7 +273,7 @@ function lineChart(series,w,h,xLabel,yLabel){
   yt.forEach(v=>{const y=sy(v);g+=`<line class="grid" x1="${m.l}" y1="${y.toFixed(1)}" x2="${w-m.r}" y2="${y.toFixed(1)}"/><text class="tk" x="${m.l-8}" y="${(y+4).toFixed(1)}" text-anchor="end">${fmt(v,0)}</text>`;});
   xt.forEach(v=>{const x=sx(v);g+=`<line class="grid" x1="${x.toFixed(1)}" y1="${m.t}" x2="${x.toFixed(1)}" y2="${m.t+ph}" opacity="0.45"/><text class="tk" x="${x.toFixed(1)}" y="${(m.t+ph+18).toFixed(1)}" text-anchor="middle">${fmt(v,0)}</text>`;});
   g+=`<line class="axis" x1="${m.l}" y1="${(m.t+ph).toFixed(1)}" x2="${w-m.r}" y2="${(m.t+ph).toFixed(1)}"/>`;
-  series.forEach(s=>{const sp=s.pts.filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));if(!sp.length)return;const d=sp.map(p=>`${sx(p.x).toFixed(1)},${sy(p.y).toFixed(1)}`).join(" ");g+=`<polyline points="${d}" fill="none" stroke="${s.color}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`;sp.forEach(p=>{g+=`<circle cx="${sx(p.x).toFixed(1)}" cy="${sy(p.y).toFixed(1)}" r="3.6" fill="var(--surface)" stroke="${s.color}" stroke-width="2"><title>${s.name} — ${fmt(p.x,0)} → ${fmt(p.y,2)} ms</title></circle>`;});});
+  series.forEach((s,si)=>{const dash=[null,"8,5","2,4"][si%3];const sp=s.pts.filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));if(!sp.length)return;const d=sp.map(p=>)})`${sx(p.x).toFixed(1)},${sy(p.y).toFixed(1)}`).join(" ");g+=`<polyline points="${d}" fill="none" stroke="${s.color}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"${dash?` stroke-dasharray="${dash}"`:""}/>`;sp.forEach(p=>{g+=`<circle cx="${sx(p.x).toFixed(1)}" cy="${sy(p.y).toFixed(1)}" r="3.6" fill="var(--surface)" stroke="${s.color}" stroke-width="2"><title>${s.name} — ${fmt(p.x,0)} → ${fmt(p.y,2)} ms</title></circle>`;});});
   g+=`<text class="ax" x="${(m.l+pw/2).toFixed(1)}" y="${h-8}" text-anchor="middle">${xLabel}</text>`;
   g+=`<text class="ax" transform="rotate(-90 14 ${(m.t+ph/2).toFixed(1)})" x="14" y="${(m.t+ph/2).toFixed(1)}" text-anchor="middle">${yLabel}</text>`;
   return `<svg viewBox="0 0 ${w} ${h}" class="chart" role="img" aria-label="${yLabel} by ${xLabel}">${g}</svg>`;
