@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import html
 import pathlib
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from dashboard import dashboard_data, refresh_analysis, render_dashboard
+from dashboard import analysis_needs_refresh, dashboard_data, refresh_analysis, render_dashboard
 
 
 def newest_result_dir(project: pathlib.Path) -> pathlib.Path | None:
@@ -31,12 +32,18 @@ def make_handler(project: pathlib.Path) -> type[BaseHTTPRequestHandler]:
             if self.path not in ("/", "/dashboard.html"):
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
-            result_dir = newest_result_dir(project)
-            if result_dir is None:
-                page = landing_page()
-            else:
-                refresh_analysis(result_dir)
-                page = render_dashboard(dashboard_data(result_dir))
+            try:
+                result_dir = newest_result_dir(project)
+                if result_dir is None:
+                    page = landing_page()
+                else:
+                    refresh_error = refresh_analysis(result_dir) if analysis_needs_refresh(result_dir) else None
+                    data = dashboard_data(result_dir)
+                    if refresh_error:
+                        data["analysis_error"] = refresh_error
+                    page = render_dashboard(data)
+            except Exception as error:  # Avoid turning an application error into a proxy 502.
+                page = f"<!doctype html><title>Dashboard error</title><h1>Dashboard error</h1><pre>{html.escape(str(error))}</pre>"
             encoded = page.encode("utf-8")
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")

@@ -23,9 +23,47 @@ def load_csv(path: pathlib.Path) -> list[dict[str, Any]]:
         return list(csv.DictReader(stream))
 
 
-def refresh_analysis(result_dir: pathlib.Path) -> None:
+ANALYSIS_OUTPUTS = (
+    "validation.json",
+    "batch_cell_summary.csv",
+    "pairwise_batch_deltas.csv",
+    "confirmatory_analysis.json",
+)
+
+
+def analysis_needs_refresh(result_dir: pathlib.Path) -> bool:
+    """Refresh only when source evidence is newer than generated analysis."""
+    analysis_dir = result_dir / "analysis"
+    outputs = [analysis_dir / name for name in ANALYSIS_OUTPUTS]
+    if any(not path.is_file() for path in outputs):
+        return True
+    sources = [result_dir / "config.snapshot.json", result_dir / "schedule.json"]
+    sources.extend((result_dir / "raw").glob("*.jsonl"))
+    existing_sources = [path for path in sources if path.is_file()]
+    if not existing_sources:
+        return False
+    return max(path.stat().st_mtime_ns for path in existing_sources) > min(
+        path.stat().st_mtime_ns for path in outputs
+    )
+
+
+def refresh_analysis(result_dir: pathlib.Path) -> str | None:
+    """Regenerate analysis and return an error message without taking down the dashboard."""
     summarise = pathlib.Path(__file__).with_name("summarise.py")
-    subprocess.run([sys.executable, str(summarise), str(result_dir)], check=False, capture_output=True, text=True)
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(summarise), str(result_dir)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        return "Analysis refresh exceeded 120 seconds; serving the last generated dashboard."
+    if completed.returncode:
+        detail = (completed.stderr or completed.stdout).strip()
+        return f"Analysis refresh failed; serving the last generated dashboard. {detail}".strip()
+    return None
 
 
 def dashboard_data(result_dir: pathlib.Path) -> dict[str, Any]:
@@ -64,7 +102,7 @@ h1 {{ margin-bottom: .25rem; }}
 .ok {{ color: #147a3d; }} .bad {{ color: #b42318; }}
 .controls {{ display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; margin: 1.5rem 0; }}
 label {{ display: grid; gap: .3rem; font-weight: 600; }}
-select {{ min-width: 12rem; padding: .4rem; }}
+select, button {{ min-width: 12rem; padding: .4rem; font: inherit; }}
 section {{ margin-top: 2rem; }}
 .chart-wrap {{ overflow-x: auto; border: 1px solid color-mix(in srgb, CanvasText 15%, transparent); border-radius: .5rem; padding: .5rem; }}
 svg {{ display: block; min-width: 760px; width: 100%; }}
@@ -90,10 +128,12 @@ th {{ white-space: nowrap; }}
     <label>Group <select id="group-filter"></select></label>
     <label>RTT <select id="rtt-filter"></select></label>
     <label>Loss per direction <select id="loss-filter"></select></label>
+    <button id="reset-filters" type="button">Reset filters</button>
   </div>
+  <p id="analysis-warning" class="notice bad" hidden></p>
   <section>
     <h2>Median handshake latency</h2>
-    <p class="muted">Each bar is the mean of available batch-cell medians for one selected condition.</p>
+    <p class="muted">Each bar is the mean of available batch-cell medians for one selected condition. The initial view selects 50 ms RTT and 0% loss when those profiles exist.</p>
     <div class="chart-wrap"><svg id="latency-chart" viewBox="0 0 980 390" role="img" aria-label="Median handshake latency by group and network condition"></svg></div>
   </section>
   <section>
@@ -128,6 +168,9 @@ const groupFilter=document.getElementById('group-filter'), rttFilter=document.ge
 fill(groupFilter,[...new Set(summaries.map(row=>row.group))].sort(),'groups');
 fill(rttFilter,[...new Set(summaries.map(row=>row.rtt_ms))].sort((a,b)=>a-b).map(value=>`${{value}} ms`),'RTT levels');
 fill(lossFilter,[...new Set(summaries.map(row=>row.loss_percent_each_direction))].sort((a,b)=>a-b).map(value=>`${{value}}%`),'loss levels');
+function chooseInitial(select, preferred) {{ select.value=[...select.options].some(option=>option.value===preferred) ? preferred : (select.options[1]?.value || ''); }}
+function resetFilters() {{ groupFilter.value=''; chooseInitial(rttFilter,'50 ms'); chooseInitial(lossFilter,'0%'); update(); }}
+resetFilters();
 function filtered() {{ return summaries.filter(row => (!groupFilter.value || row.group===groupFilter.value) && (!rttFilter.value || `${{row.rtt_ms}} ms`===rttFilter.value) && (!lossFilter.value || `${{row.loss_percent_each_direction}}%`===lossFilter.value)); }}
 function updateSummary(rows) {{
   const body=document.querySelector('#summary-table tbody'); body.innerHTML='';
@@ -135,22 +178,28 @@ function updateSummary(rows) {{
 }}
 function updateChart(rows) {{
   const values=aggregate(rows), svg=document.getElementById('latency-chart');
+  if (!values.length) {{ svg.innerHTML='<title>No matching data</title><text x="490" y="195" text-anchor="middle">No completed conditions match the selected filters.</text>'; return; }}
   const width=980, height=390, left=62, bottom=72, top=24, right=22, plotHeight=height-top-bottom, plotWidth=width-left-right;
   const max=Math.max(1,...values.map(row=>row.median_latency_ms));
   const ticks=[0,.25,.5,.75,1].map(fraction=>fraction*max);
-  let marks=`<title>Median handshake latency</title><desc>Filtered median handshake latency by group and network condition.</desc>`;
+  let marks=`<title>Mean batch-cell median handshake latency</title><desc>Filtered mean of batch-cell median handshake latency by group and network condition.</desc>`;
   ticks.forEach(value => {{ const y=top+plotHeight-(value/max)*plotHeight; marks+=`<line x1="${{left}}" y1="${{y}}" x2="${{width-right}}" y2="${{y}}" stroke="currentColor" opacity=".15"/><text x="${{left-8}}" y="${{y+4}}" text-anchor="end" font-size="12">${{fmt(value,0)}}</text>`; }});
   const slot=plotWidth/Math.max(values.length,1), barWidth=Math.min(42,slot*.65);
   values.forEach((row,index) => {{ const barHeight=(row.median_latency_ms/max)*plotHeight, x=left+slot*index+(slot-barWidth)/2, y=top+plotHeight-barHeight, label=`${{row.group}} · ${{row.rtt_ms}} ms · ${{row.loss_percent_each_direction}}%`; marks+=`<rect x="${{x}}" y="${{y}}" width="${{barWidth}}" height="${{barHeight}}" fill="#2878b5"><title>${{label}}: ${{fmt(row.median_latency_ms,3)}} ms</title></rect><text x="${{x+barWidth/2}}" y="${{y-6}}" text-anchor="middle" font-size="11">${{fmt(row.median_latency_ms,1)}}</text><text x="${{x+barWidth/2}}" y="${{height-16}}" text-anchor="end" transform="rotate(-45 ${{x+barWidth/2}} ${{height-16}})" font-size="11">${{label}}</text>`; }});
   marks+=`<line x1="${{left}}" y1="${{top+plotHeight}}" x2="${{width-right}}" y2="${{top+plotHeight}}" stroke="currentColor"/><text x="14" y="18" font-size="12">ms</text>`; svg.innerHTML=marks;
 }}
-function update() {{ const rows=filtered(); updateSummary(rows); updateChart(rows); }}
+function filteredContrasts() {{ return (data.confirmatory||[]).filter(row => (!groupFilter.value || row.baseline_group===groupFilter.value || row.comparison_group===groupFilter.value) && (!rttFilter.value || `${{row.rtt_ms}} ms`===rttFilter.value) && (!lossFilter.value || `${{row.loss_percent_each_direction}}%`===lossFilter.value)); }}
+function updateContrasts() {{
+  const contrastBody=document.querySelector('#contrast-table tbody'); contrastBody.innerHTML='';
+  filteredContrasts().forEach(row => {{ const tr=document.createElement('tr'); const interval=row.ci95_low===null ? '—' : `${{fmt(row.ci95_low,3)}} to ${{fmt(row.ci95_high,3)}}`; tr.innerHTML=`<td>${{row.comparison_group}} − ${{row.baseline_group}}</td><td>${{row.rtt_ms}} ms</td><td>${{row.loss_percent_each_direction}}%</td><td class="number">${{row.n}}</td><td class="number">${{fmt(row.mean,3)}}</td><td class="number">${{interval}}</td><td class="number">${{fmt(row.holm_adjusted_pvalue,4)}}</td>`; contrastBody.appendChild(tr); }});
+}}
+function update() {{ const rows=filtered(); updateSummary(rows); updateChart(rows); updateContrasts(); }}
 [groupFilter,rttFilter,lossFilter].forEach(control=>control.addEventListener('change',update));
+document.getElementById('reset-filters').addEventListener('click',resetFilters);
 document.getElementById('run-name').textContent=data.run_name;
 const validation=data.validation, valid=validation.valid===true; const notice=document.getElementById('validation'); notice.textContent=valid ? 'Validation passed: the frozen schedule, raw records and integrity checks are consistent.' : `Validation requires attention: ${{(validation.issues||[]).join('; ')||'unknown issue'}}`; notice.className=`notice ${{valid?'ok':'bad'}}`;
 document.getElementById('observations').textContent=fmt(validation.observations||0,0); document.getElementById('batch-cells').textContent=fmt(validation.batch_cells||0,0); document.getElementById('successes').textContent=fmt((validation.status_counts||{{}}).success||0,0); document.getElementById('paired-deltas').textContent=fmt(validation.primary_batch_deltas||0,0);
-const contrastBody=document.querySelector('#contrast-table tbody');
-(data.confirmatory||[]).forEach(row => {{ const tr=document.createElement('tr'); const interval=row.ci95_low===null ? '—' : `${{fmt(row.ci95_low,3)}} to ${{fmt(row.ci95_high,3)}}`; tr.innerHTML=`<td>${{row.comparison_group}} − ${{row.baseline_group}}</td><td>${{row.rtt_ms}} ms</td><td>${{row.loss_percent_each_direction}}%</td><td class="number">${{row.n}}</td><td class="number">${{fmt(row.mean,3)}}</td><td class="number">${{interval}}</td><td class="number">${{fmt(row.holm_adjusted_pvalue,4)}}</td>`; contrastBody.appendChild(tr); }});
+const warning=document.getElementById('analysis-warning'); if (data.analysis_error) {{ warning.hidden=false; warning.textContent=data.analysis_error; }}
 if (!(data.confirmatory||[]).length) document.getElementById('confirmatory-section').hidden=true;
 update();
 </script>
