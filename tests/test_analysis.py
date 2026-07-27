@@ -15,6 +15,14 @@ assert SPEC.loader
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
+DASHBOARD_SPEC = importlib.util.spec_from_file_location(
+    "dashboard", PROJECT / "analysis/dashboard.py"
+)
+DASHBOARD = importlib.util.module_from_spec(DASHBOARD_SPEC)
+assert DASHBOARD_SPEC.loader
+sys.modules[DASHBOARD_SPEC.name] = DASHBOARD
+DASHBOARD_SPEC.loader.exec_module(DASHBOARD)
+
 
 def observation(batch, cell, group, sequence, latency, status="success"):
     return {
@@ -85,6 +93,18 @@ class AnalysisTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             issues = MODULE.validate_dataset(pathlib.Path(directory), [row])
         self.assertIn("no outbound TLS bytes were recorded for successful handshakes", issues)
+
+    def test_dashboard_renders_validation_and_directional_bytes(self):
+        page = DASHBOARD.render_dashboard({
+            "run_name": "demo-run",
+            "validation": {"valid": True, "observations": 1, "batch_cells": 1, "primary_batch_deltas": 0, "status_counts": {"success": 1}},
+            "summaries": [{"batch_id": "batch-001", "cell_id": "X25519__rtt-0ms__loss-0p0pct", "group": "X25519", "rtt_ms": "0", "loss_percent_each_direction": "0.0", "attempts": "1", "successes": "1", "failure_rate": "0", "median_latency_ms": "1.2", "median_tls_bytes_read": "100", "median_tls_bytes_written": "50"}],
+            "primary_deltas": [],
+            "confirmatory": [],
+        })
+        self.assertIn("PQC TLS benchmark dashboard", page)
+        self.assertIn("Bytes written", page)
+        self.assertIn("demo-run", page)
 
 
 if __name__ == "__main__":
