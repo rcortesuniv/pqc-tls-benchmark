@@ -8,15 +8,25 @@ import pathlib
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from dashboard import analysis_needs_refresh, dashboard_data, refresh_analysis, render_dashboard
+from dashboard import ANALYSIS_OUTPUTS, analysis_needs_refresh, dashboard_data, refresh_analysis, render_dashboard
 
 
 def newest_result_dir(project: pathlib.Path) -> pathlib.Path | None:
+    # A run directory is servable when its generated analysis outputs exist.
+    # We do NOT require raw/ + config.snapshot.json: those are gitignored
+    # runtime evidence that may be cleaned up once analysis has been produced.
+    # Requiring them hid legitimate runs whose pre-rendered analysis was all
+    # that remained, causing the dashboard to serve the empty landing page.
     results = project / "results"
-    candidates = [
-        path for path in results.glob("pqc-tls-*")
-        if path.is_dir() and (path / "raw").is_dir() and (path / "config.snapshot.json").is_file()
-    ]
+    candidates = []
+    for path in results.glob("pqc-tls-*"):
+        if not path.is_dir():
+            continue
+        analysis_dir = path / "analysis"
+        if analysis_dir.is_dir() and all(
+            (analysis_dir / name).is_file() for name in ANALYSIS_OUTPUTS
+        ):
+            candidates.append(path)
     return max(candidates, key=lambda path: path.stat().st_mtime, default=None)
 
 

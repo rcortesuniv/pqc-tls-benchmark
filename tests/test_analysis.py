@@ -164,12 +164,22 @@ class AnalysisTests(unittest.TestCase):
             first = project / "results" / "pqc-tls-first"
             second = project / "results" / "pqc-tls-second"
             for result in (first, second):
-                (result / "raw").mkdir(parents=True)
-                (result / "config.snapshot.json").write_text("{}\n", encoding="utf-8")
+                (result / "analysis").mkdir(parents=True)
+                for name in DASHBOARD.ANALYSIS_OUTPUTS:
+                    (result / "analysis" / name).write_text("{}\n", encoding="utf-8")
             os.utime(first, (1, 1))
             os.utime(second, (2, 2))
             self.assertEqual(DASHBOARD_SERVER.newest_result_dir(project), second)
             self.assertIn("No result directory", DASHBOARD_SERVER.landing_page())
+
+    def test_dashboard_server_ignores_run_without_analysis_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = pathlib.Path(directory)
+            only = project / "results" / "pqc-tls-incomplete"
+            (only / "raw").mkdir(parents=True)
+            (only / "config.snapshot.json").write_text("{}\n", encoding="utf-8")
+            # No analysis/ outputs -> not servable, even though raw evidence exists.
+            self.assertIsNone(DASHBOARD_SERVER.newest_result_dir(project))
 
 
 if __name__ == "__main__":
