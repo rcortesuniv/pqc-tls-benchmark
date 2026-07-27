@@ -198,6 +198,10 @@ summaries and batch-aware contrast outputs. See
 [`docs/results-dashboard.md`](docs/results-dashboard.md) for Codespaces viewing
 instructions.
 
+When the supplied Codespaces development container is rebuilt, it starts a
+private dashboard server on port 8000 automatically. The server renders the
+newest result at `/dashboard.html` and refreshes it when the page is opened.
+
 ## Explanatory workloads
 
 Run fixed-concurrency throughput separately from latency collection:

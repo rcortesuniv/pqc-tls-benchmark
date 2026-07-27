@@ -1,0 +1,13 @@
+{
+  "name": "PQC TLS benchmark",
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "postStartCommand": "bash .devcontainer/post-start.sh",
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "PQC TLS results dashboard",
+      "onAutoForward": "openPreview",
+      "visibility": "private"
+    }
+  }
+}

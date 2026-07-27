@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -22,6 +23,15 @@ DASHBOARD = importlib.util.module_from_spec(DASHBOARD_SPEC)
 assert DASHBOARD_SPEC.loader
 sys.modules[DASHBOARD_SPEC.name] = DASHBOARD
 DASHBOARD_SPEC.loader.exec_module(DASHBOARD)
+
+sys.path.insert(0, str(PROJECT / "analysis"))
+DASHBOARD_SERVER_SPEC = importlib.util.spec_from_file_location(
+    "dashboard_server", PROJECT / "analysis/dashboard_server.py"
+)
+DASHBOARD_SERVER = importlib.util.module_from_spec(DASHBOARD_SERVER_SPEC)
+assert DASHBOARD_SERVER_SPEC.loader
+sys.modules[DASHBOARD_SERVER_SPEC.name] = DASHBOARD_SERVER
+DASHBOARD_SERVER_SPEC.loader.exec_module(DASHBOARD_SERVER)
 
 
 def observation(batch, cell, group, sequence, latency, status="success"):
@@ -105,6 +115,19 @@ class AnalysisTests(unittest.TestCase):
         self.assertIn("PQC TLS benchmark dashboard", page)
         self.assertIn("Bytes written", page)
         self.assertIn("demo-run", page)
+
+    def test_dashboard_server_selects_newest_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = pathlib.Path(directory)
+            first = project / "results" / "pqc-tls-first"
+            second = project / "results" / "pqc-tls-second"
+            for result in (first, second):
+                (result / "raw").mkdir(parents=True)
+                (result / "config.snapshot.json").write_text("{}\n", encoding="utf-8")
+            os.utime(first, (1, 1))
+            os.utime(second, (2, 2))
+            self.assertEqual(DASHBOARD_SERVER.newest_result_dir(project), second)
+            self.assertIn("No result directory", DASHBOARD_SERVER.landing_page())
 
 
 if __name__ == "__main__":
