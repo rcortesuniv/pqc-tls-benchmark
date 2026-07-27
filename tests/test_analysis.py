@@ -115,6 +115,26 @@ class AnalysisTests(unittest.TestCase):
         self.assertIn("PQC TLS benchmark dashboard", page)
         self.assertIn("Bytes written", page)
         self.assertIn("demo-run", page)
+        self.assertIn("reset-filters", page)
+        self.assertIn("filteredContrasts", page)
+
+    def test_dashboard_refresh_is_skipped_when_outputs_are_current(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = pathlib.Path(directory)
+            raw = result / "raw"
+            analysis = result / "analysis"
+            raw.mkdir()
+            analysis.mkdir()
+            (result / "config.snapshot.json").write_text("{}\n", encoding="utf-8")
+            (result / "schedule.json").write_text("[]\n", encoding="utf-8")
+            (raw / "batch.jsonl").write_text("{}\n", encoding="utf-8")
+            for name in DASHBOARD.ANALYSIS_OUTPUTS:
+                (analysis / name).write_text("{}\n", encoding="utf-8")
+            self.assertFalse(DASHBOARD.analysis_needs_refresh(result))
+            os.utime(raw / "batch.jsonl", (2, 2))
+            for name in DASHBOARD.ANALYSIS_OUTPUTS:
+                os.utime(analysis / name, (1, 1))
+            self.assertTrue(DASHBOARD.analysis_needs_refresh(result))
 
     def test_dashboard_server_selects_newest_result(self):
         with tempfile.TemporaryDirectory() as directory:
