@@ -76,6 +76,7 @@ def dashboard_data(result_dir: pathlib.Path) -> dict[str, Any]:
         "primary_deltas": load_csv(analysis_dir / "primary_batch_deltas.csv"),
         "confirmatory": confirmatory.get("contrasts", []),
         "primary_contrast": confirmatory.get("primary_contrast"),
+        "pooled_tail": load_csv(analysis_dir / "pooled_tail_summary.csv"),
     }
 
 
@@ -154,6 +155,8 @@ td.num,th.num{text-align:right}
 .pill.sig{background:var(--okbg);color:var(--ok)}
 .pill.nonsig{background:var(--surface2);color:var(--muted)}
 .empty{padding:2.2rem 1rem;text-align:center;color:var(--muted);font-size:.9rem}
+.inline-toggle{display:inline-flex;align-items:center;gap:.4rem;font-size:.82rem;color:var(--muted);cursor:pointer}
+.inline-toggle input{accent-color:var(--accent)}
 footer{color:var(--muted);font-size:.78rem;text-align:center;padding:2.5rem 1rem 0;line-height:1.6}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -203,8 +206,14 @@ footer{color:var(--muted);font-size:.78rem;text-align:center;padding:2.5rem 1rem
       <h2>Tail (p99) vs loss</h2>
       <p class="desc">99th-percentile latency against per-direction loss for the selected RTT. The steep rise is retransmission-driven and group-agnostic.</p>
       <div class="panel"><div class="body"><div class="chart-scroll" id="chart-tail"></div></div></div>
+      <p class="desc" style="margin-top:.6rem"><label class="inline-toggle"><input type="checkbox" id="log-toggle"> Log y-axis (p99 spans roughly RTT to 4x RTT under loss)</label></p>
     </section>
   </div>
+  <section>
+    <h2>Pooled tail — block-bootstrap 95% CI <span class="count" id="tail-count"></span></h2>
+    <p class="desc">Per-condition 95th and 99th percentiles pooled across all handshakes, with a block (cluster) bootstrap 95% CI for the p99 that resamples whole batches. These replace the unstable median-of-batch tail estimates shown elsewhere.</p>
+    <div class="panel"><div class="body"><div class="chart-scroll"><table id="tail-table"><thead><tr><th>Group</th><th>RTT</th><th>Loss</th><th class="num">Handshakes</th><th class="num">Batches</th><th class="num">p95 (ms)</th><th class="num">p99 (ms)</th><th class="num">p99 95% CI (ms)</th></tr></thead><tbody></tbody></table></div></div></div>
+  </section>
   <section>
     <h2>Condition summary <span class="count" id="summary-count"></span></h2>
     <p class="desc">Per-group, per-network-condition aggregates over the 20 batches.</p>
@@ -237,6 +246,8 @@ const colorOf = g => COLOR[g] || "#6b5bd8";
 const cellMap = new Map();
 S.forEach(r => { const k=r.group+"|"+r.rtt+"|"+r.loss; if(!cellMap.has(k)) cellMap.set(k,[]); cellMap.get(k).push(r); });
 const cells = [...cellMap.values()].map(rs => { const f=rs[0]; return {group:f.group, rtt:f.rtt, loss:f.loss, n:rs.length, median:med(rs.map(r=>r.median)), p95:med(rs.map(r=>r.p95)), p99:med(rs.map(r=>r.p99)), fail:avg(rs.map(r=>r.failure_rate)), br:med(rs.map(r=>r.br)), bw:med(rs.map(r=>r.bw))}; });
+const T = (data.pooled_tail||[]).map(t => ({group:t.group, rtt:+t.rtt_ms, loss:+t.loss_percent_each_direction, n:+t.n_handshakes, nb:+t.n_batches, p95:+t.pooled_p95_ms, p99:+t.pooled_p99_ms, lo99:+t.p99_block_ci95_low_ms, hi99:+t.p99_block_ci95_high_ms}));
+let logScale=false;
 const gf=document.getElementById("f-group"), rf=document.getElementById("f-rtt"), lf=document.getElementById("f-loss");
 function fill(sel,vals,fm){sel.innerHTML=`<option value="">All</option>`+vals.map(v=>`<option value="${v}">${fm(v)}</option>`).join("");}
 fill(gf,GROUPS,v=>v);
@@ -302,10 +313,44 @@ function chartVsRTT(){
   const series=GROUPS.map(g=>{const pts=RTTS.map(rtt=>{const rs=cells.filter(c=>c.group===g&&c.rtt===rtt&&(loss===null||c.loss===loss));if(!rs.length)return null;return{x:rtt,y:avg(rs.map(c=>c.median))};}).filter(Boolean);return{name:g,color:colorOf(g),pts:pts};});
   return lineChart(series,760,360,"RTT (ms)","Median latency (ms)")+legend(GROUPS.map(g=>({name:g,color:colorOf(g)})));
 }
+function lineChartBands(series,w,h,xLabel,yLabel,logY){
+  const m={l:56,r:20,t:18,b:48}; const pw=w-m.l-m.r, ph=h-m.t-m.b;
+  const rows=[].concat(...series.map(s=>s.rows));
+  const pts=rows.filter(r=>Number.isFinite(r.x)&&Number.isFinite(r.y));
+  if(!pts.length) return `<div class="empty">No data for the selected filters.</div>`;
+  const xs=pts.map(p=>p.x), ysAll=[].concat(...rows.flatMap(r=>[r.y,r.lo,r.hi].filter(Number.isFinite)));
+  let xmin=Math.min(...xs), xmax=Math.max(...xs);
+  let ymin=ysAll.length?Math.min(...ysAll):0, ymax=ysAll.length?Math.max(...ysAll):1;
+  if(xmin===xmax){xmax=xmin+1;} ymin=Math.max(ymin,0);
+  const pad=(ymax-ymin)*0.06||1; ymax+=pad; if(logY){ymin=Math.max(ymin,0.1);}
+  let yticks = logY ? (()=>{const out=[];for(let e=Math.floor(Math.log10(ymin));e<=Math.ceil(Math.log10(ymax));e++){const v=Math.pow(10,e);if(v>=ymin*0.9&&v<=ymax*1.1)out.push(v);}return out;})() : ticks(ymin,ymax,6);
+  const lyv=v=>logY?Math.log10(v):v;
+  const lo=lyv(ymin), hi=lyv(ymax);
+  const sx=v=>m.l+(v-xmin)/((xmax-xmin)||1)*pw;
+  const sy=v=>m.t+ph-(lyv(v)-lo)/((hi-lo)||1)*ph;
+  let g="";
+  yticks.forEach(v=>{const y=sy(v);if(y<m.t-1||y>m.t+ph+1)return;g+=`<line class="grid" x1="${m.l}" y1="${y.toFixed(1)}" x2="${w-m.r}" y2="${y.toFixed(1)}"/><text class="tk" x="${m.l-8}" y="${(y+4).toFixed(1)}" text-anchor="end">${fmt(v,0)}</text>`;});
+  const xsAll=[...new Set(pts.map(p=>p.x))].sort((a,b)=>a-b);
+  xsAll.forEach(v=>{const x=sx(v);g+=`<line class="grid" x1="${x.toFixed(1)}" y1="${m.t}" x2="${x.toFixed(1)}" y2="${m.t+ph}" opacity="0.45"/><text class="tk" x="${x.toFixed(1)}" y="${(m.t+ph+18).toFixed(1)}" text-anchor="middle">${fmt(v,1)}</text>`;});
+  g+=`<line class="axis" x1="${m.l}" y1="${(m.t+ph).toFixed(1)}" x2="${w-m.r}" y2="${(m.t+ph).toFixed(1)}"/>`;
+  series.forEach(s=>{const sp=s.rows.filter(r=>Number.isFinite(r.x)&&Number.isFinite(r.y));if(!sp.length)return;
+    if(sp.every(r=>Number.isFinite(r.lo)&&Number.isFinite(r.hi))){const top=sp.map(r=>`${sx(r.x).toFixed(1)},${sy(r.hi).toFixed(1)}`).join(" ");const bot=sp.slice().reverse().map(r=>`${sx(r.x).toFixed(1)},${sy(r.lo).toFixed(1)}`).join(" ");g+=`<polygon points="${top} ${bot}" fill="${s.color}" fill-opacity="0.13" stroke="none"><title>${s.name} 95% CI band</title></polygon>`;}
+    const d=sp.map(r=>`${sx(r.x).toFixed(1)},${sy(r.y).toFixed(1)}`).join(" ");g+=`<polyline points="${d}" fill="none" stroke="${s.color}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`;
+    sp.forEach(r=>{g+=`<circle cx="${sx(r.x).toFixed(1)}" cy="${sy(r.y).toFixed(1)}" r="3.6" fill="var(--surface)" stroke="${s.color}" stroke-width="2"><title>${s.name} — ${fmt(r.x,1)}% loss: ${fmt(r.y,2)} ms (95% CI ${fmt(r.lo,1)} to ${fmt(r.hi,1)})</title></circle>`;});});
+  g+=`<text class="ax" x="${(m.l+pw/2).toFixed(1)}" y="${h-8}" text-anchor="middle">${xLabel}</text>`;
+  g+=`<text class="ax" transform="rotate(-90 14 ${(m.t+ph/2).toFixed(1)})" x="14" y="${(m.t+ph/2).toFixed(1)}" text-anchor="middle">${yLabel}</text>`;
+  return `<svg viewBox="0 0 ${w} ${h}" class="chart" role="img" aria-label="${yLabel} by ${xLabel}">${g}</svg>`;
+}
 function chartTail(){
   const rtt=rf.value?+rf.value:null;
-  const series=GROUPS.map(g=>{const pts=LOSSES.map(loss=>{const rs=cells.filter(c=>c.group===g&&c.loss===loss&&(rtt===null||c.rtt===rtt));if(!rs.length)return null;return{x:loss,y:avg(rs.map(c=>c.p99))};}).filter(Boolean);return{name:g,color:colorOf(g),pts:pts};});
-  return lineChart(series,760,360,"Loss per direction (%)","p99 latency (ms)")+legend(GROUPS.map(g=>({name:g,color:colorOf(g)})));
+  const series=GROUPS.map(g=>{const rows=T.filter(t=>t.group===g&&(rtt===null||t.rtt===rtt)).sort((a,b)=>a.loss-b.loss);return{name:g,color:colorOf(g),rows:rows.map(t=>({x:t.loss,y:t.p99,lo:t.lo99,hi:t.hi99}))};}).filter(s=>s.rows.length);
+  return lineChartBands(series,760,360,"Loss per direction (%)","p99 latency (ms)",logScale)+legend(GROUPS.map(g=>({name:g,color:colorOf(g)})));
+}
+function updateTailTable(){
+  const body=document.querySelector("#tail-table tbody"); if(!body) return; body.innerHTML="";
+  const rows=T.slice().sort((a,b)=>a.rtt-b.rtt||a.loss-b.loss||a.group.localeCompare(b.group)).filter(t=>(!gf.value||t.group===gf.value)&&(!rf.value||t.rtt===+rf.value)&&(!lf.value||t.loss===+lf.value));
+  rows.forEach(t=>{const ci=Number.isFinite(t.lo99)?`${fmt(t.lo99,1)} to ${fmt(t.hi99,1)}`:"—";const tr=document.createElement("tr");tr.innerHTML=`<td>${t.group}</td><td>${fmt(t.rtt,0)} ms</td><td>${fmt(t.loss,1)}%</td><td class="num">${fmtInt(t.n)}</td><td class="num">${t.nb}</td><td class="num">${fmt(t.p95,2)}</td><td class="num">${fmt(t.p99,2)}</td><td class="num">${ci}</td>`;body.appendChild(tr);});
+  const tc=document.getElementById("tail-count"); if(tc) tc.textContent=rows.length?`(${rows.length})`:"";
 }
 function updateSummary(){
   const body=document.querySelector("#summary-table tbody"); body.innerHTML="";
@@ -337,9 +382,10 @@ function set(id,t){const e=document.getElementById(id); if(e) e.textContent=t;}
 function renderKpis(){const v=data.validation||{};const succ=(v.status_counts||{}).success||0;const obs=v.observations||0;set("k-obs",fmtInt(obs));set("k-cells",fmtInt(v.batch_cells||0));set("k-succ",fmtInt(succ));set("k-rate",obs?pct(succ/obs):"—");set("k-deltas",fmtInt(v.primary_batch_deltas||0));}
 function renderBadge(){const v=data.validation||{};const ok=v.valid===true;const b=document.getElementById("badge");if(b){b.className="badge "+(ok?"ok":"bad");b.innerHTML=`<span class="dot"></span>${ok?"Validation passed":"Validation needs attention"}`;}const d=document.getElementById("badge-detail");if(d)d.textContent=ok?"Frozen schedule, raw records and integrity checks are consistent.":((v.issues||[]).join("; ")||"unknown issue");const rn=document.getElementById("run-name");if(rn)rn.textContent=data.run_name;}
 function renderWarn(){const w=document.getElementById("analysis-warning");if(w&&data.analysis_error){w.hidden=false;w.textContent=data.analysis_error;}}
-function update(){renderHero();renderKpis();updateSummary();document.getElementById("chart-latency").innerHTML=chartLatency();document.getElementById("chart-rtt").innerHTML=chartVsRTT();document.getElementById("chart-tail").innerHTML=chartTail();updateContrasts();}
+function update(){renderHero();renderKpis();updateSummary();updateTailTable();document.getElementById("chart-latency").innerHTML=chartLatency();document.getElementById("chart-rtt").innerHTML=chartVsRTT();document.getElementById("chart-tail").innerHTML=chartTail();updateContrasts();}
 [gf,rf,lf].forEach(c=>c.addEventListener("change",update));
 document.getElementById("reset-filters").addEventListener("click",reset);
+const logT=document.getElementById("log-toggle"); if(logT) logT.addEventListener("change",()=>{logScale=logT.checked;document.getElementById("chart-tail").innerHTML=chartTail();});
 renderBadge();renderWarn();reset();
 </script>
 </body>
