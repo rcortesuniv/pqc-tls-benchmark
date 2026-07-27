@@ -7,3 +7,7 @@ certs/*.key
 certs/*.crt
 __pycache__/
 *.pyc
+
+# macOS
+.DS_Store
+**/.DS_Store
