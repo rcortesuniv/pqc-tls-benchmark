@@ -72,6 +72,17 @@ class OrchestratorTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 MODULE.load_config(pathlib.Path(stream.name))
 
+    def test_integrity_manifest_keeps_interrupted_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result_dir = pathlib.Path(directory)
+            (result_dir / "raw").mkdir()
+            (result_dir / "interrupted").mkdir()
+            (result_dir / "schedule.json").write_text("[]\n", encoding="utf-8")
+            (result_dir / "interrupted" / "partial.jsonl").write_text("{}\n", encoding="utf-8")
+            manifest = MODULE.integrity_manifest(result_dir)
+            self.assertIn("schedule.json", manifest)
+            self.assertIn("interrupted/partial.jsonl", manifest)
+
 
 if __name__ == "__main__":
     unittest.main()

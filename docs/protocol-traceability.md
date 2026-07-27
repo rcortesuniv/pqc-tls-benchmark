@@ -14,6 +14,7 @@
 | Failures retained | TCP/TLS/verification outcomes recorded explicitly | Implemented |
 | Append-only machine-readable raw data | Exclusive-create per-cell JSONL files | Implemented |
 | Environment and integrity evidence | Frozen schedule before the first cell, provenance manifest and SHA-256 integrity manifest | Implemented |
+| Interruptible long-run collection | Per-cell progress, interrupted-state schedule evidence, retained partial output and hash-guarded resume | Implemented for runs created by the current runner version |
 | Batch as confirmatory unit | Per-batch cell medians and paired batch deltas | Implemented |
 | CPU core/resource controls | Fixed-CPU/memory/PID Compose backend | Implemented; validate limits on target Docker host |
 | Independently verified network profile | `tc` state plus independent namespace ping calibration | Implemented; perform and retain calibration evidence per pilot profile |

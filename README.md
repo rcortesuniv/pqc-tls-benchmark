@@ -137,10 +137,33 @@ The full provisional plan executes 10 batches × 36 cells × 100 recorded
 handshakes, plus 20 unrecorded warm-ups per cell. These are planning values and
 must not be treated as the final sample-size decision.
 
+The runner prints a start and completion line for every cell. Do not type its
+`Completed ... results: ...` line into the shell: it is program output. When a
+run finishes, use the literal result directory printed by the runner, for
+example:
+
+```bash
+analysis/summarise.py results/pqc-tls-pilot-20260727T120000Z
+```
+
+If a run started by the current version is interrupted, its partial cell output
+is retained under `interrupted/` and its frozen schedule records the event. Do
+not analyse that incomplete directory until it has been resumed successfully:
+
+```bash
+scripts/run-experiment.py --backend container \
+  --output results/pqc-tls-pilot-20260727T120000Z --resume
+```
+
+Resume is guarded: the configuration, schedule and client binary must match
+their frozen hashes. Older interrupted directories whose partial output was
+written directly into `raw/` cannot be resumed safely and must be retained as
+invalid pilot evidence before starting a fresh run.
+
 ## Analyse a run
 
 ```bash
-analysis/summarise.py results/<run-directory>
+analysis/summarise.py results/pqc-tls-pilot-20260727T120000Z
 ```
 
 The script creates:

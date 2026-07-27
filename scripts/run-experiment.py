@@ -273,7 +273,9 @@ def integrity_manifest(output_dir: pathlib.Path) -> dict[str, str]:
         output_dir / "config.snapshot.json",
         output_dir / "manifest.json",
         output_dir / "schedule.json",
+        output_dir / "resume.json",
         *sorted((output_dir / "raw").glob("*.jsonl")),
+        *sorted((output_dir / "interrupted").glob("*.jsonl")),
     ]
     return {str(path.relative_to(output_dir)): sha256(path) for path in paths if path.is_file()}
 
@@ -309,6 +311,11 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--backend", choices=("netns", "container"), help="Override the configured backend")
     parser.add_argument("--max-cells", type=int, help="Run only the first N scheduled cells")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume an interrupted run created by this version; requires --output",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -320,9 +327,27 @@ def main() -> int:
         planned = planned[: args.max_cells]
 
     run_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    if args.resume and args.dry_run:
+        parser.error("--resume cannot be combined with --dry-run")
+    if args.resume and args.output is None:
+        parser.error("--resume requires --output RESULT_DIRECTORY")
+
     output_dir = args.output or project / "results" / f"{config['experiment_id']}-{run_id}"
     raw_dir = output_dir / "raw"
-    if not args.dry_run:
+    if args.resume:
+        if not output_dir.is_dir() or not (output_dir / "schedule.json").is_file():
+            raise RuntimeError(f"Cannot resume: {output_dir} has no frozen schedule")
+        manifest_path = output_dir / "manifest.json"
+        if not manifest_path.is_file():
+            raise RuntimeError(f"Cannot resume: {output_dir} has no environment manifest")
+        original_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if original_manifest.get("config_sha256") != sha256(args.config):
+            raise RuntimeError("Cannot resume: the current configuration differs from the frozen snapshot")
+        original_client_hash = original_manifest.get("client_sha256")
+        current_client_hash = sha256(args.client) if args.client.exists() else None
+        if original_client_hash != current_client_hash:
+            raise RuntimeError("Cannot resume: the client binary differs from the frozen environment")
+    elif not args.dry_run:
         raw_dir.mkdir(parents=True, exist_ok=False)
         write_json(output_dir / "config.snapshot.json", config)
         write_json(output_dir / "manifest.json", environment_manifest(config, args.config, args.client))
@@ -330,10 +355,10 @@ def main() -> int:
     endpoint = config["endpoint"]
     execution = config["execution"]
     backend = config["network_backend"]
-    schedule_records: list[dict[str, Any]] = []
+    expected_schedule: list[dict[str, Any]] = []
     for ordinal, (batch, cell) in enumerate(planned, start=1):
         batch_id = f"batch-{batch:03d}"
-        schedule_records.append(
+        expected_schedule.append(
             {
                 "ordinal": ordinal,
                 "batch_id": batch_id,
@@ -344,61 +369,120 @@ def main() -> int:
                 "state": "pending",
             }
         )
-    if not args.dry_run:
+    if args.resume:
+        schedule_records = json.loads((output_dir / "schedule.json").read_text(encoding="utf-8"))
+        expected_identity = [
+            (record["ordinal"], record["batch_id"], record["cell_id"])
+            for record in expected_schedule
+        ]
+        actual_identity = [
+            (record.get("ordinal"), record.get("batch_id"), record.get("cell_id"))
+            for record in schedule_records
+        ]
+        if actual_identity != expected_identity:
+            raise RuntimeError("Cannot resume: the frozen schedule does not match the requested plan")
+        for record in schedule_records:
+            if record.get("state") != "completed":
+                raw_path = raw_dir / f"{record['batch_id']}__{record['cell_id']}.jsonl"
+                if raw_path.exists():
+                    raise RuntimeError(
+                        f"Cannot safely resume: unfinished cell has raw data at {raw_path}. "
+                        "Start a fresh run instead."
+                    )
+        resume_path = output_dir / "resume.json"
+        events = json.loads(resume_path.read_text(encoding="utf-8")) if resume_path.exists() else []
+        events.append({
+            "resumed_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "client_sha256": current_client_hash,
+        })
+        write_json(resume_path, events)
+    else:
+        schedule_records = expected_schedule
+    if not args.dry_run and not args.resume:
         # Freeze the entire order before the first perturbation or handshake.
         write_json(output_dir / "schedule.json", schedule_records)
 
-    for ordinal, (batch, cell) in enumerate(planned, start=1):
-        batch_id = f"batch-{batch:03d}"
-        record = schedule_records[ordinal - 1]
-        if backend_type == "netns":
-            netem_commands = apply_netem(config, cell, args.dry_run)
-            netem_observed = verify_netem(config, args.dry_run)
-        else:
-            netem_commands = apply_container_netem(project, cell, args.dry_run)
-            netem_observed = verify_container_netem(project, args.dry_run)
-        record["netem_commands"] = [shlex.join(item) for item in netem_commands]
-        record["netem_observed"] = netem_observed
+    active_record: dict[str, Any] | None = None
+    active_partial: pathlib.Path | None = None
+    try:
+        for ordinal, (batch, cell) in enumerate(planned, start=1):
+            batch_id = f"batch-{batch:03d}"
+            record = schedule_records[ordinal - 1]
+            if args.resume and record.get("state") == "completed":
+                continue
+            active_record = record
+            active_partial = None
+            if not args.dry_run:
+                record["state"] = "running"
+                record["started_utc"] = dt.datetime.now(dt.timezone.utc).isoformat()
+                write_json(output_dir / "schedule.json", schedule_records)
+                print(f"[{ordinal:04d}/{len(planned):04d}] starting {batch_id} {cell.identifier}", flush=True)
+            if backend_type == "netns":
+                netem_commands = apply_netem(config, cell, args.dry_run)
+                netem_observed = verify_netem(config, args.dry_run)
+            else:
+                netem_commands = apply_container_netem(project, cell, args.dry_run)
+                netem_observed = verify_container_netem(project, args.dry_run)
+            record["netem_commands"] = [shlex.join(item) for item in netem_commands]
+            record["netem_observed"] = netem_observed
 
-        if backend_type == "netns":
-            client_command = [
-                "sudo", "ip", "netns", "exec", backend["client_namespace"],
-                str(args.client.resolve()), "--host", str(endpoint["host"]),
-                "--port", str(endpoint["port"]), "--server-name", str(endpoint["server_name"]),
-                "--ca-file", str((project / endpoint["ca_file"]).resolve()),
-            ]
-        else:
-            client_command = compose_exec(project, "client", [
-                "/usr/local/bin/tls_bench_client", "--host", "server", "--port", str(endpoint["port"]),
-                "--server-name", str(endpoint["server_name"]), "--ca-file", "/certs/ca.crt",
+            if backend_type == "netns":
+                client_command = [
+                    "sudo", "ip", "netns", "exec", backend["client_namespace"],
+                    str(args.client.resolve()), "--host", str(endpoint["host"]),
+                    "--port", str(endpoint["port"]), "--server-name", str(endpoint["server_name"]),
+                    "--ca-file", str((project / endpoint["ca_file"]).resolve()),
+                ]
+            else:
+                client_command = compose_exec(project, "client", [
+                    "/usr/local/bin/tls_bench_client", "--host", "server", "--port", str(endpoint["port"]),
+                    "--server-name", str(endpoint["server_name"]), "--ca-file", "/certs/ca.crt",
+                ])
+            client_command.extend([
+                "--group", cell.group, "--batch-id", batch_id, "--cell-id", cell.identifier,
+                "--warmups", str(execution["warmup_handshakes_per_cell"]),
+                "--attempts", str(execution["recorded_handshakes_per_cell"]),
+                "--timeout-ms", str(execution["timeout_ms"]),
             ])
-        client_command.extend([
-            "--group", cell.group, "--batch-id", batch_id, "--cell-id", cell.identifier,
-            "--warmups", str(execution["warmup_handshakes_per_cell"]),
-            "--attempts", str(execution["recorded_handshakes_per_cell"]),
-            "--timeout-ms", str(execution["timeout_ms"]),
-        ])
-        record["client_command"] = shlex.join(client_command)
-        if args.dry_run:
-            print(f"{ordinal:04d} {batch_id} {cell.identifier}")
-        else:
-            raw_path = raw_dir / f"{batch_id}__{cell.identifier}.jsonl"
-            started = time.monotonic()
-            with raw_path.open("x", encoding="utf-8") as raw_output:
-                completed, metrics = run_monitored(client_command, raw_output)
-            record["duration_seconds"] = time.monotonic() - started
-            record.update(metrics)
-            if backend_type == "container":
-                record["resource_evidence_scope"] = "docker-compose launcher; use Docker limits for endpoint isolation"
-            record["exit_code"] = completed.returncode
-            record["stderr"] = completed.stderr
-            record["raw_sha256"] = sha256(raw_path)
-            record["state"] = "completed" if completed.returncode == 0 else "client_failed"
+            record["client_command"] = shlex.join(client_command)
+            if args.dry_run:
+                print(f"{ordinal:04d} {batch_id} {cell.identifier}")
+            else:
+                raw_path = raw_dir / f"{batch_id}__{cell.identifier}.jsonl"
+                interrupted_dir = output_dir / "interrupted"
+                interrupted_dir.mkdir(exist_ok=True)
+                active_partial = interrupted_dir / f"{raw_path.stem}__attempt-{ordinal:04d}.jsonl"
+                started = time.monotonic()
+                with active_partial.open("x", encoding="utf-8") as raw_output:
+                    completed, metrics = run_monitored(client_command, raw_output)
+                active_partial.replace(raw_path)
+                active_partial = None
+                record["duration_seconds"] = time.monotonic() - started
+                record.update(metrics)
+                if backend_type == "container":
+                    record["resource_evidence_scope"] = "docker-compose launcher; use Docker limits for endpoint isolation"
+                record["exit_code"] = completed.returncode
+                record["stderr"] = completed.stderr
+                record["raw_sha256"] = sha256(raw_path)
+                record["state"] = "completed" if completed.returncode == 0 else "client_failed"
+                write_json(output_dir / "schedule.json", schedule_records)
+                if completed.returncode != 0:
+                    write_json(output_dir / "integrity.json", integrity_manifest(output_dir))
+                    raise RuntimeError(f"Client failed for {cell.identifier}: {completed.stderr}")
+                print(f"[{ordinal:04d}/{len(planned):04d}] completed {cell.identifier} in {record['duration_seconds']:.1f}s", flush=True)
+                active_record = None
+                time.sleep(execution["pause_between_cells_ms"] / 1000.0)
+    except KeyboardInterrupt:
+        if not args.dry_run and active_record is not None and active_record.get("state") != "completed":
+            active_record["state"] = "interrupted"
+            active_record["interrupted_utc"] = dt.datetime.now(dt.timezone.utc).isoformat()
+            if active_partial is not None and active_partial.exists():
+                active_record["partial_raw_path"] = str(active_partial.relative_to(output_dir))
+                active_record["partial_raw_sha256"] = sha256(active_partial)
             write_json(output_dir / "schedule.json", schedule_records)
-            if completed.returncode != 0:
-                write_json(output_dir / "integrity.json", integrity_manifest(output_dir))
-                raise RuntimeError(f"Client failed for {cell.identifier}: {completed.stderr}")
-            time.sleep(execution["pause_between_cells_ms"] / 1000.0)
+            write_json(output_dir / "integrity.json", integrity_manifest(output_dir))
+        print("Interrupted; schedule and partial evidence were preserved. Resume with --output RESULT_DIRECTORY --resume.", file=sys.stderr)
+        return 130
 
     if args.dry_run:
         print(f"Planned {len(planned)} cells; output would be {output_dir}")
