@@ -388,8 +388,11 @@ function renderHero(){
   const ci=Number.isFinite(P.ci95_low)?`${fmt(P.ci95_low,3)} – ${fmt(P.ci95_high,3)} ms`:"—";
   const excludesZero=Number.isFinite(P.ci95_low)&&(P.ci95_low>0||P.ci95_high<0);
   const verdict=excludesZero?`Statistically significant (95% CI excludes 0). Below the 1 ms practical threshold for ${pct(le1)} of batches.`:`Not statistically significant at the pre-specified level.`;
+  const eqTests=(P.equivalence_tests||[]).filter(t=>t);
+  const tightestEq=eqTests.length?eqTests.reduce((a,b)=>a.margin_ms<b.margin_ms?a:b):null;
+  const eqLine=tightestEq?`<div class="verdict">Equivalence within ±${fmt(tightestEq.margin_ms,0)} ms (two one-sided test): <b>${tightestEq.equivalent?"confirmed":"not confirmed"}</b> (p=${fmt(tightestEq.tost_pvalue,4)})</div>`:"";
   host.hidden=false; wrap.style.gridTemplateColumns="";
-  host.innerHTML=`<div class="eyebrow">Primary contrast — pre-specified, no multiplicity adjustment</div><div class="contrast"><span class="mono">${P.comparison_group} − ${P.baseline_group}</span> <span class="cond">at ${fmt(P.rtt_ms,0)} ms RTT · ${fmt(P.loss_percent_each_direction,1)}% loss</span></div><div class="big">${fmt(P.mean,3)}<span class="unit">ms</span></div><div class="stats"><span>95% CI <b class="mono">${ci}</b></span><span>permutation p <b>${P.permutation_pvalue<0.0001?"&lt; 0.0001":fmt(P.permutation_pvalue,4)}</b></span><span>n = ${P.n} batches</span></div><div class="verdict">${verdict}</div>`;
+  host.innerHTML=`<div class="eyebrow">Primary contrast — pre-specified, no multiplicity adjustment</div><div class="contrast"><span class="mono">${P.comparison_group} − ${P.baseline_group}</span> <span class="cond">at ${fmt(P.rtt_ms,0)} ms RTT · ${fmt(P.loss_percent_each_direction,1)}% loss</span></div><div class="big">${fmt(P.mean,3)}<span class="unit">ms</span></div><div class="stats"><span>95% CI <b class="mono">${ci}</b></span><span>permutation p <b>${P.permutation_pvalue<0.0001?"&lt; 0.0001":fmt(P.permutation_pvalue,4)}</b></span><span>n = ${P.n} batches</span></div><div class="verdict">${verdict}</div>${eqLine}`;
 }
 function set(id,t){const e=document.getElementById(id); if(e) e.textContent=t;}
 function renderKpis(){const v=data.validation||{};const succ=(v.status_counts||{}).success||0;const obs=v.observations||0;set("k-obs",fmtInt(obs));set("k-cells",fmtInt(v.batch_cells||0));set("k-succ",fmtInt(succ));set("k-rate",obs?pct(succ/obs):"—");set("k-deltas",fmtInt(v.primary_batch_deltas||0));}

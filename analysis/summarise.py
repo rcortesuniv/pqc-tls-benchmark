@@ -212,6 +212,46 @@ def sign_permutation_pvalue(values: list[float]) -> float | None:
     return sum(value >= observed - 1e-12 for value in signed_means) / len(signed_means)
 
 
+def _one_sided_sign_permutation_pvalue(shifted: list[float], direction: str) -> float | None:
+    """One-sided paired randomisation p-value: is mean(shifted) significantly
+    greater ('gt') or less ('lt') than zero, under random sign-flip exchangeability."""
+    finite = [value for value in shifted if math.isfinite(value)]
+    if not finite:
+        return None
+    observed = statistics.fmean(finite)
+    if len(finite) > 16:
+        generator = random.Random(0)
+        signed_means = [statistics.fmean(value if generator.getrandbits(1) else -value for value in finite) for _ in range(20000)]
+    else:
+        signed_means = [statistics.fmean(sign * value for sign, value in zip(signs, finite)) for signs in itertools.product((-1, 1), repeat=len(finite))]
+    if direction == "gt":
+        return sum(value >= observed - 1e-12 for value in signed_means) / len(signed_means)
+    return sum(value <= observed + 1e-12 for value in signed_means) / len(signed_means)
+
+
+def tost_equivalence(values: list[float], margin: float) -> dict[str, Any] | None:
+    """Two one-sided tests (TOST) for equivalence within +/- margin, built on the
+    same paired sign-permutation methodology as sign_permutation_pvalue: shift the
+    batch deltas to each equivalence boundary and test whether the observed mean
+    lies on the negligible side of it. Equivalence (mean within +/- margin) is
+    concluded only when BOTH one-sided tests reject, i.e. tost_pvalue < alpha."""
+    finite = [value for value in values if math.isfinite(value)]
+    if not finite or margin <= 0:
+        return None
+    p_lower = _one_sided_sign_permutation_pvalue([value + margin for value in finite], "gt")
+    p_upper = _one_sided_sign_permutation_pvalue([value - margin for value in finite], "lt")
+    if p_lower is None or p_upper is None:
+        return None
+    tost_pvalue = max(p_lower, p_upper)
+    return {
+        "margin_ms": margin,
+        "p_lower": p_lower,
+        "p_upper": p_upper,
+        "tost_pvalue": tost_pvalue,
+        "equivalent": tost_pvalue < 0.05,
+    }
+
+
 def holm_adjust(pvalues: list[float | None]) -> list[float | None]:
     adjusted: list[float | None] = [None] * len(pvalues)
     ordered = sorted((value, index) for index, value in enumerate(pvalues) if value is not None)
@@ -272,12 +312,14 @@ def confirmatory_analysis(pairwise: list[dict[str, Any]], config: dict[str, Any]
     resamples = int(settings.get("bootstrap_resamples", 5000))
     seed = int(settings.get("seed", 0))
     thresholds = [float(value) for value in settings.get("acceptance_thresholds_ms", [])]
+    equivalence_margins = [threshold for threshold in thresholds if threshold > 0]
     grouped: dict[tuple[Any, ...], list[float]] = defaultdict(list)
     for row in pairwise:
         key = (row["rtt_ms"], row["loss_percent_each_direction"], row["baseline_group"], row["comparison_group"])
         grouped[key].append(float(row["comparison_minus_baseline_ms"]))
     result: list[dict[str, Any]] = []
     raw_pvalues: list[float | None] = []
+    equivalence_by_margin: dict[float, list[dict[str, Any] | None]] = {margin: [] for margin in equivalence_margins}
     for index, (key, values) in enumerate(sorted(grouped.items())):
         report = dict(zip(("rtt_ms", "loss_percent_each_direction", "baseline_group", "comparison_group"), key))
         report.update(bootstrap_mean_interval(values, resamples=resamples, seed=seed + index))
@@ -291,10 +333,22 @@ def confirmatory_analysis(pairwise: list[dict[str, Any]], config: dict[str, Any]
             }
             for threshold in thresholds
         ]
+        equivalence_tests = [tost_equivalence(values, margin) for margin in equivalence_margins]
+        report["equivalence_tests"] = equivalence_tests
+        for margin, test in zip(equivalence_margins, equivalence_tests):
+            equivalence_by_margin[margin].append(test)
         raw_pvalues.append(report["permutation_pvalue"])
         result.append(report)
     for report, adjusted in zip(result, holm_adjust(raw_pvalues)):
         report["holm_adjusted_pvalue"] = adjusted
+    # Each equivalence margin is its own family of 36 comparisons, adjusted
+    # separately from the difference-test p-values and from each other.
+    for margin, tests in equivalence_by_margin.items():
+        raw_tost = [test["tost_pvalue"] if test else None for test in tests]
+        for test, adjusted in zip(tests, holm_adjust(raw_tost)):
+            if test is not None:
+                test["holm_adjusted_tost_pvalue"] = adjusted
+                test["equivalent_after_adjustment"] = adjusted is not None and adjusted < 0.05
     return result
 
 
@@ -326,6 +380,8 @@ def primary_contrast_analysis(pairwise: list[dict[str, Any]], config: dict[str, 
     report["permutation_pvalue"] = sign_permutation_pvalue(values)
     report["lag1_autocorrelation"] = lag1_autocorrelation(values)
     report["multiplicity_adjustment"] = "none: one pre-specified primary comparison"
+    equivalence_margins = [float(value) for value in settings.get("acceptance_thresholds_ms", []) if float(value) > 0]
+    report["equivalence_tests"] = [tost_equivalence(values, margin) for margin in equivalence_margins]
     return report
 
 
@@ -453,17 +509,28 @@ def compute_findings(
         pc = primary_contrast
         excludes_zero = pc["ci95_low"] is not None and (pc["ci95_low"] > 0 or pc["ci95_high"] < 0)
         verdict = "significant" if excludes_zero else "not significant"
+        summary = (
+            f"{pc['comparison_group']} costs a mean {pc['mean']:+.3f} ms vs {pc['baseline_group']} at "
+            f"{pc['rtt_ms']:g} ms RTT / {pc['loss_percent_each_direction']:g}% loss (95% CI "
+            f"{pc['ci95_low']:.3f} to {pc['ci95_high']:.3f} ms, permutation p="
+            f"{pc['permutation_pvalue']:.4f}; one pre-specified comparison, no multiplicity adjustment). "
+            f"Result: {verdict} at the 95% level."
+        )
+        equivalence_tests = [test for test in (pc.get("equivalence_tests") or []) if test is not None]
+        tightest_equivalence = min(equivalence_tests, key=lambda test: test["margin_ms"]) if equivalence_tests else None
+        if tightest_equivalence:
+            eq_word = "confirmed" if tightest_equivalence["equivalent"] else "not confirmed"
+            summary += (
+                f" Equivalence within ±{tightest_equivalence['margin_ms']:g} ms is {eq_word} "
+                f"(two one-sided test p={tightest_equivalence['tost_pvalue']:.4f})."
+            )
         primary_finding = {
             "available": True,
             "verdict": verdict,
-            "summary": (
-                f"{pc['comparison_group']} costs a mean {pc['mean']:+.3f} ms vs {pc['baseline_group']} at "
-                f"{pc['rtt_ms']:g} ms RTT / {pc['loss_percent_each_direction']:g}% loss (95% CI "
-                f"{pc['ci95_low']:.3f} to {pc['ci95_high']:.3f} ms, permutation p="
-                f"{pc['permutation_pvalue']:.4f}; one pre-specified comparison, no multiplicity adjustment). "
-                f"Result: {verdict} at the 95% level."
-            ),
+            "summary": summary,
         }
+        if tightest_equivalence:
+            primary_finding["equivalence"] = tightest_equivalence
     else:
         primary_finding = {
             "available": False,
@@ -612,6 +679,20 @@ def _plain_language_summary(
             f"of total handshake time."
         )
 
+    equivalence = primary_finding.get("equivalence")
+    if equivalence:
+        if equivalence["equivalent"]:
+            sentences.append(
+                f"A formal equivalence test backs this up: the extra cost is statistically confirmed to be "
+                f"smaller than {equivalence['margin_ms']:g} ms, not just numerically small in this one sample."
+            )
+        else:
+            sentences.append(
+                f"A formal equivalence test could not yet confirm the extra cost is reliably smaller than "
+                f"{equivalence['margin_ms']:g} ms — the observed difference is small, but more batches would "
+                f"be needed to state that with statistical confidence."
+            )
+
     group_specific_effect = bool(tail_finding.get("group_specific_effect"))
     if tail_finding.get("available"):
         if group_specific_effect:
@@ -641,6 +722,13 @@ def _plain_language_summary(
         sentences.append(
             "There isn't enough paired classical/hybrid data in this run to say how large that cost "
             "typically is — see the technical findings above for what is and isn't available."
+        )
+    elif overhead_small and not group_specific_effect and equivalence and equivalence["equivalent"]:
+        sentences.append(
+            f"Overall, this run's results formally support the practical viability of post-quantum and "
+            f"hybrid TLS key exchange from a performance standpoint: the extra cost is confirmed smaller "
+            f"than {equivalence['margin_ms']:g} ms, and it doesn't change how the connection behaves under "
+            f"packet loss."
         )
     elif overhead_small and not group_specific_effect:
         sentences.append(

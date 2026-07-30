@@ -58,3 +58,31 @@ Both are a starting point for interpretation, not a substitute for reviewing
 the full contrast table — and if `analysis.primary_comparison` is missing
 from the experiment config, the primary-contrast finding (and the plain-
 language paragraph) say so explicitly instead of silently omitting it.
+
+## Equivalence testing (TOST)
+
+The confirmatory analysis in `summarise.py` includes a formal difference test
+(paired sign-permutation) for every comparison, but a difference test can
+only ever fail to detect a difference — it cannot positively confirm that two
+groups perform the same. Since the project's actual hypothesis is closer to
+"hybrid/post-quantum key exchange is not practically slower than classical",
+`tost_equivalence()` adds a **two one-sided test (TOST)**: it tests whether
+the batch-level mean contrast is confirmed to lie strictly within
+`±margin_ms` of zero, at every positive value already configured in
+`analysis.acceptance_thresholds_ms`. It's built on the same paired
+sign-permutation methodology as the existing difference test — shift the
+batch deltas to each equivalence boundary and test one-sided in that
+direction — so it needs no new dependency or statistical framework.
+
+- On the **primary contrast**: reported unadjusted, exactly like the
+  difference test, since it's the one pre-specified comparison.
+- On the **36 exploratory contrasts**: each margin is its own family of 36
+  comparisons, Holm-adjusted separately from the difference-test p-values and
+  from every other margin (`holm_adjusted_tost_pvalue`,
+  `equivalent_after_adjustment`).
+
+The dashboard's hero card shows the equivalence verdict at the tightest
+configured margin next to the primary contrast's significance verdict, and
+`findings.json`'s plain-language paragraph is strengthened from a heuristic
+"small margin" claim to "a formal equivalence test confirms this" whenever
+the test actually passes.

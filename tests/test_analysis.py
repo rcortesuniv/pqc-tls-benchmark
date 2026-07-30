@@ -114,6 +114,54 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(report["mean"], 0.2)
         self.assertEqual(report["multiplicity_adjustment"], "none: one pre-specified primary comparison")
 
+    def test_tost_equivalence_within_and_outside_margin(self):
+        within = [0.2] * 10
+        outside = [2.0] * 10
+        self.assertTrue(MODULE.tost_equivalence(within, 1.0)["equivalent"])
+        self.assertFalse(MODULE.tost_equivalence(outside, 1.0)["equivalent"])
+        self.assertIsNone(MODULE.tost_equivalence(within, 0.0))
+        self.assertIsNone(MODULE.tost_equivalence([], 1.0))
+
+    def test_primary_contrast_includes_equivalence_tests(self):
+        pairwise = [
+            {"batch_id": f"batch-{index:03d}", "rtt_ms": 50, "loss_percent_each_direction": 0.0,
+             "baseline_group": "X25519", "comparison_group": "X25519MLKEM768",
+             "comparison_minus_baseline_ms": 0.2, "failure_rate_delta": 0.0}
+            for index in range(1, 11)
+        ]
+        report = MODULE.primary_contrast_analysis(pairwise, {"analysis": {
+            "seed": 1, "bootstrap_resamples": 100,
+            "acceptance_thresholds_ms": [0.0, 1.0, 5.0],
+            "primary_comparison": {
+                "baseline_group": "X25519", "comparison_group": "X25519MLKEM768",
+                "rtt_ms": 50, "loss_percent_each_direction": 0.0,
+            },
+        }})
+        self.assertIsNotNone(report)
+        assert report is not None
+        margins = [test["margin_ms"] for test in report["equivalence_tests"]]
+        self.assertEqual(margins, [1.0, 5.0])
+        self.assertTrue(report["equivalence_tests"][0]["equivalent"])
+
+    def test_confirmatory_analysis_holm_adjusts_equivalence_per_margin(self):
+        pairwise = []
+        for rtt in (0, 50):
+            for index in range(1, 5):
+                pairwise.append({
+                    "batch_id": f"batch-{index:03d}", "rtt_ms": rtt, "loss_percent_each_direction": 0.0,
+                    "baseline_group": "X25519", "comparison_group": "X25519MLKEM768",
+                    "comparison_minus_baseline_ms": 0.2, "failure_rate_delta": 0.0,
+                })
+        report = MODULE.confirmatory_analysis(
+            pairwise, {"analysis": {"seed": 1, "bootstrap_resamples": 100, "acceptance_thresholds_ms": [1.0]}}
+        )
+        self.assertEqual(len(report), 2)
+        for row in report:
+            self.assertEqual(len(row["equivalence_tests"]), 1)
+            test = row["equivalence_tests"][0]
+            self.assertIn("holm_adjusted_tost_pvalue", test)
+            self.assertGreaterEqual(test["holm_adjusted_tost_pvalue"], test["tost_pvalue"])
+
     def test_compute_findings_reports_significant_primary_contrast(self):
         pairwise = [
             {"batch_id": f"batch-{index:03d}", "rtt_ms": 50, "loss_percent_each_direction": 0.0,
