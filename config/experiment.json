@@ -21,7 +21,14 @@
   "analysis": {
     "seed": 20260726,
     "bootstrap_resamples": 5000,
-    "acceptance_thresholds_ms": [0.0, 1.0, 5.0, 10.0]
+    "acceptance_thresholds_ms": [0.0, 1.0, 5.0, 10.0],
+    "primary_comparison": {
+      "baseline_group": "X25519",
+      "comparison_group": "X25519MLKEM768",
+      "rtt_ms": 50,
+      "loss_percent_each_direction": 0.0
+    },
+    "scope": "One pre-specified primary contrast; the remaining conditions and comparisons are exploratory."
   },
   "endpoint": {
     "host": "10.203.0.2",
