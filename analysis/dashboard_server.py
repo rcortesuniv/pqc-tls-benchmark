@@ -19,7 +19,7 @@ def newest_result_dir(project: pathlib.Path) -> pathlib.Path | None:
     # that remained, causing the dashboard to serve the empty landing page.
     results = project / "results"
     candidates = []
-    for path in results.glob("pqc-tls-*"):
+    for path in (results.iterdir() if results.is_dir() else []):
         if not path.is_dir():
             continue
         analysis_dir = path / "analysis"

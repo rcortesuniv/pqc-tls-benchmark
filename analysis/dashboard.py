@@ -26,7 +26,6 @@ def load_csv(path: pathlib.Path) -> list[dict[str, Any]]:
 ANALYSIS_OUTPUTS = (
     "validation.json",
     "batch_cell_summary.csv",
-    "pairwise_batch_deltas.csv",
     "confirmatory_analysis.json",
 )
 

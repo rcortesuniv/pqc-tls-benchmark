@@ -181,6 +181,17 @@ class AnalysisTests(unittest.TestCase):
             # No analysis/ outputs -> not servable, even though raw evidence exists.
             self.assertIsNone(DASHBOARD_SERVER.newest_result_dir(project))
 
+    def test_dashboard_server_serves_runs_outside_pqc_tls_naming(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = pathlib.Path(directory)
+            # scripts/smoke-test.sh names its output smoke-test-<timestamp>,
+            # which does not match the pqc-tls-* prefix other runs use.
+            result = project / "results" / "smoke-test-20260730T182701Z"
+            (result / "analysis").mkdir(parents=True)
+            for name in DASHBOARD.ANALYSIS_OUTPUTS:
+                (result / "analysis" / name).write_text("{}\n", encoding="utf-8")
+            self.assertEqual(DASHBOARD_SERVER.newest_result_dir(project), result)
+
 
 if __name__ == "__main__":
     unittest.main()
