@@ -157,6 +157,10 @@ td.num,th.num{text-align:right}
 .inline-toggle{display:inline-flex;align-items:center;gap:.4rem;font-size:.82rem;color:var(--muted);cursor:pointer}
 .inline-toggle input{accent-color:var(--accent)}
 footer{color:var(--muted);font-size:.78rem;text-align:center;padding:2.5rem 1rem 0;line-height:1.6}
+.run-select{display:flex;align-items:center;gap:.5rem}
+.run-select label{display:flex;align-items:center;gap:.4rem;font-size:.78rem;color:var(--muted);font-weight:600}
+.run-select select{padding:.35rem .6rem;font:inherit;font-size:.82rem;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text)}
+.run-select select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -164,6 +168,7 @@ footer{color:var(--muted);font-size:.78rem;text-align:center;padding:2.5rem 1rem
 <header>
   <div class="row">
     <div class="brand"><h1>PQC TLS benchmark dashboard</h1><span class="sub" id="run-name"></span></div>
+    <div class="run-select" id="run-select" hidden><label>Run<select id="f-run" aria-label="Select benchmark run"></select></label></div>
     <span class="badge ok" id="badge"><span class="dot"></span>Validation passed</span>
     <div class="badge-detail" id="badge-detail"></div>
   </div>
@@ -381,11 +386,20 @@ function set(id,t){const e=document.getElementById(id); if(e) e.textContent=t;}
 function renderKpis(){const v=data.validation||{};const succ=(v.status_counts||{}).success||0;const obs=v.observations||0;set("k-obs",fmtInt(obs));set("k-cells",fmtInt(v.batch_cells||0));set("k-succ",fmtInt(succ));set("k-rate",obs?pct(succ/obs):"—");set("k-deltas",fmtInt(v.primary_batch_deltas||0));}
 function renderBadge(){const v=data.validation||{};const ok=v.valid===true;const b=document.getElementById("badge");if(b){b.className="badge "+(ok?"ok":"bad");b.innerHTML=`<span class="dot"></span>${ok?"Validation passed":"Validation needs attention"}`;}const d=document.getElementById("badge-detail");if(d)d.textContent=ok?"Frozen schedule, raw records and integrity checks are consistent.":((v.issues||[]).join("; ")||"unknown issue");const rn=document.getElementById("run-name");if(rn)rn.textContent=data.run_name;}
 function renderWarn(){const w=document.getElementById("analysis-warning");if(w&&data.analysis_error){w.hidden=false;w.textContent=data.analysis_error;}}
+function renderRunSelector(){
+  const wrap=document.getElementById("run-select"), sel=document.getElementById("f-run");
+  const runs=data.available_runs;
+  if(!wrap||!sel||!Array.isArray(runs)||runs.length<2){ if(wrap) wrap.hidden=true; return; }
+  wrap.hidden=false;
+  sel.innerHTML="";
+  runs.forEach(name=>{const opt=document.createElement("option");opt.value=name;opt.textContent=name;if(name===data.run_name)opt.selected=true;sel.appendChild(opt);});
+  sel.addEventListener("change",()=>{location.href="/dashboard.html?run="+encodeURIComponent(sel.value);});
+}
 function update(){renderHero();renderKpis();updateSummary();updateTailTable();document.getElementById("chart-latency").innerHTML=chartLatency();document.getElementById("chart-rtt").innerHTML=chartVsRTT();document.getElementById("chart-tail").innerHTML=chartTail();updateContrasts();}
 [gf,rf,lf].forEach(c=>c.addEventListener("change",update));
 document.getElementById("reset-filters").addEventListener("click",reset);
 const logT=document.getElementById("log-toggle"); if(logT) logT.addEventListener("change",()=>{logScale=logT.checked;document.getElementById("chart-tail").innerHTML=chartTail();});
-renderBadge();renderWarn();reset();
+renderBadge();renderWarn();renderRunSelector();reset();
 </script>
 </body>
 </html>"""

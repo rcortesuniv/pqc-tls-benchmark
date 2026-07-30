@@ -5,13 +5,14 @@ from __future__ import annotations
 import argparse
 import html
 import pathlib
+import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from dashboard import ANALYSIS_OUTPUTS, analysis_needs_refresh, dashboard_data, refresh_analysis, render_dashboard
 
 
-def newest_result_dir(project: pathlib.Path) -> pathlib.Path | None:
+def servable_result_dirs(project: pathlib.Path) -> list[pathlib.Path]:
     # A run directory is servable when its generated analysis outputs exist.
     # We do NOT require raw/ + config.snapshot.json: those are gitignored
     # runtime evidence that may be cleaned up once analysis has been produced.
@@ -27,7 +28,13 @@ def newest_result_dir(project: pathlib.Path) -> pathlib.Path | None:
             (analysis_dir / name).is_file() for name in ANALYSIS_OUTPUTS
         ):
             candidates.append(path)
-    return max(candidates, key=lambda path: path.stat().st_mtime, default=None)
+    candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    return candidates
+
+
+def newest_result_dir(project: pathlib.Path) -> pathlib.Path | None:
+    candidates = servable_result_dirs(project)
+    return candidates[0] if candidates else None
 
 
 def landing_page() -> str:
@@ -39,18 +46,30 @@ def landing_page() -> str:
 def make_handler(project: pathlib.Path) -> type[BaseHTTPRequestHandler]:
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
-            if self.path not in ("/", "/dashboard.html"):
+            parsed = urllib.parse.urlsplit(self.path)
+            if parsed.path not in ("/", "/dashboard.html"):
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             try:
-                result_dir = newest_result_dir(project)
+                candidates = servable_result_dirs(project)
+                # Select by exact name match against known-good candidates only;
+                # never build a filesystem path from the raw query value.
+                requested = urllib.parse.parse_qs(parsed.query).get("run", [None])[0]
+                notice = None
+                result_dir = next((path for path in candidates if path.name == requested), None) if requested else None
+                if requested and result_dir is None:
+                    notice = f"Run '{requested}' was not found; showing the newest available run instead."
+                if result_dir is None:
+                    result_dir = candidates[0] if candidates else None
                 if result_dir is None:
                     page = landing_page()
                 else:
                     refresh_error = refresh_analysis(result_dir) if analysis_needs_refresh(result_dir) else None
                     data = dashboard_data(result_dir)
-                    if refresh_error:
-                        data["analysis_error"] = refresh_error
+                    data["available_runs"] = [path.name for path in candidates]
+                    combined_notice = " ".join(msg for msg in (notice, refresh_error) if msg)
+                    if combined_notice:
+                        data["analysis_error"] = combined_notice
                     page = render_dashboard(data)
             except Exception as error:  # Avoid turning an application error into a proxy 502.
                 page = f"<!doctype html><title>Dashboard error</title><h1>Dashboard error</h1><pre>{html.escape(str(error))}</pre>"

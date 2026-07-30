@@ -192,6 +192,42 @@ class AnalysisTests(unittest.TestCase):
                 (result / "analysis" / name).write_text("{}\n", encoding="utf-8")
             self.assertEqual(DASHBOARD_SERVER.newest_result_dir(project), result)
 
+    def test_dashboard_server_run_query_param_selects_and_falls_back(self):
+        import http.server
+        import threading
+        import urllib.request
+
+        with tempfile.TemporaryDirectory() as directory:
+            project = pathlib.Path(directory)
+            older = project / "results" / "pqc-tls-older"
+            newer = project / "results" / "pqc-tls-newer"
+            for result in (older, newer):
+                analysis = result / "analysis"
+                analysis.mkdir(parents=True)
+                (analysis / "validation.json").write_text("{}\n", encoding="utf-8")
+                (analysis / "confirmatory_analysis.json").write_text("{}\n", encoding="utf-8")
+                (analysis / "batch_cell_summary.csv").write_text("group\nX25519\n", encoding="utf-8")
+            os.utime(older, (1, 1))
+            os.utime(newer, (2, 2))
+
+            server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), DASHBOARD_SERVER.make_handler(project))
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                port = server.server_address[1]
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/dashboard.html?run=pqc-tls-older") as resp:
+                    body = resp.read().decode("utf-8")
+                self.assertIn("pqc-tls-older", body)
+                self.assertNotIn("was not found", body)
+
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/dashboard.html?run=does-not-exist") as resp:
+                    body = resp.read().decode("utf-8")
+                self.assertIn("was not found", body)
+                self.assertIn("pqc-tls-newer", body)
+            finally:
+                server.shutdown()
+                server.server_close()
+
 
 if __name__ == "__main__":
     unittest.main()
