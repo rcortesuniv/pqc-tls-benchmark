@@ -86,3 +86,14 @@ configured margin next to the primary contrast's significance verdict, and
 `findings.json`'s plain-language paragraph is strengthened from a heuristic
 "small margin" claim to "a formal equivalence test confirms this" whenever
 the test actually passes.
+
+`findings.json` also reports `exploratory_equivalence`: how many of the 36
+exploratory contrasts are confirmed equivalent (after Holm adjustment) at the
+tightest configured margin. This matters independently of the primary
+contrast's own significance or availability — a run can show 0 of 36
+exploratory contrasts surviving the plain difference test's Holm correction
+(a batch-count power limitation, not evidence of "no effect") while still
+showing 36 of 36 confirmed equivalent, because the two tests answer different
+questions. When `analysis.primary_comparison` isn't configured, the
+plain-language paragraph falls back to this exploratory-equivalence result
+instead of leaving the practical-viability conclusion unsupported.

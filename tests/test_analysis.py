@@ -202,6 +202,27 @@ class AnalysisTests(unittest.TestCase):
         self.assertIn("primary_comparison is missing", findings["primary_contrast"]["summary"])
         self.assertIn("enough paired classical/hybrid data", findings["plain_language_summary"]["summary"])
 
+    def test_compute_findings_falls_back_to_exploratory_equivalence_without_primary(self):
+        # Mirrors the real pqc-tls-pilot-full run: no primary_comparison configured,
+        # but every exploratory contrast is small and confirmed equivalent.
+        pairwise = [
+            {"batch_id": f"batch-{index:03d}", "rtt_ms": rtt, "loss_percent_each_direction": 0.0,
+             "baseline_group": "X25519", "comparison_group": "X25519MLKEM768",
+             "comparison_minus_baseline_ms": 0.3, "failure_rate_delta": 0.0}
+            for rtt in (0, 50) for index in range(1, 11)
+        ]
+        config = {"execution": {"batches": 10}, "analysis": {"seed": 1, "bootstrap_resamples": 100, "acceptance_thresholds_ms": [1.0]}}
+        confirmatory = MODULE.confirmatory_analysis(pairwise, config)
+        deltas = [{"hybrid_minus_x25519_ms": 0.3, "hybrid_overhead_percent": 0.6} for _ in range(20)]
+        report = {"observations": 2000, "status_counts": {"success": 2000}, "issues": []}
+        findings = MODULE.compute_findings(report, deltas, confirmatory, None, [], config)
+        self.assertFalse(findings["primary_contrast"]["available"])
+        self.assertEqual(findings["exploratory_equivalence"]["n_confirmed"], 2)
+        self.assertEqual(findings["exploratory_equivalence"]["n_tested"], 2)
+        plain = findings["plain_language_summary"]["summary"]
+        self.assertIn("2 of 2 condition-by-condition comparisons", plain)
+        self.assertIn("formally support", plain)
+
     def test_validation_detects_duplicate_sequence(self):
         row = observation("batch-001", "X25519__rtt-0ms__loss-0p0pct", "X25519", 0, 1.0)
         with tempfile.TemporaryDirectory() as directory:

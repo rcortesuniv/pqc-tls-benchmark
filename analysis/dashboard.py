@@ -414,7 +414,7 @@ function renderFindings(){
   plain.textContent="";
   const plainSummary=f&&f.plain_language_summary&&f.plain_language_summary.summary;
   if(plainSummary) plain.textContent=plainSummary;
-  const order=[["validation","Validation"],["primary_contrast","Primary contrast"],["multiplicity","Multiple comparisons"],["hybrid_overhead","Hybrid overhead"],["tail_under_loss","Tail under loss"]];
+  const order=[["validation","Validation"],["primary_contrast","Primary contrast"],["multiplicity","Multiple comparisons"],["exploratory_equivalence","Exploratory equivalence"],["hybrid_overhead","Hybrid overhead"],["tail_under_loss","Tail under loss"]];
   order.forEach(([key,label])=>{
     const entry=f&&f[key]; if(!entry||!entry.summary) return;
     const li=document.createElement("li"); li.style.marginTop=".5rem";

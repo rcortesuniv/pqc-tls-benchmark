@@ -569,6 +569,32 @@ def compute_findings(
         "n_holm_significant": n_significant,
     }
 
+    exploratory_equivalence_margins = sorted({
+        test["margin_ms"] for row in confirmatory for test in (row.get("equivalence_tests") or []) if test
+    })
+    if exploratory_equivalence_margins:
+        tightest_margin = exploratory_equivalence_margins[0]
+        tests_at_tightest = [
+            test for row in confirmatory for test in (row.get("equivalence_tests") or [])
+            if test and test["margin_ms"] == tightest_margin
+        ]
+        n_confirmed = sum(1 for test in tests_at_tightest if test.get("equivalent_after_adjustment"))
+        exploratory_equivalence_finding = {
+            "margin_ms": tightest_margin,
+            "n_tested": len(tests_at_tightest),
+            "n_confirmed": n_confirmed,
+            "summary": (
+                f"{n_confirmed} of {len(tests_at_tightest)} exploratory contrasts are confirmed statistically "
+                f"equivalent within ±{tightest_margin:g} ms after Holm adjustment (two one-sided test), "
+                f"independently of whether they were significant on the plain difference test above."
+            ),
+        }
+    else:
+        exploratory_equivalence_finding = {
+            "margin_ms": None, "n_tested": 0, "n_confirmed": 0,
+            "summary": "No positive equivalence margin is configured (analysis.acceptance_thresholds_ms has no values above 0).",
+        }
+
     delta_values = [
         float(row["hybrid_minus_x25519_ms"]) for row in deltas
         if math.isfinite(float(row.get("hybrid_minus_x25519_ms", math.nan)))
@@ -632,7 +658,7 @@ def compute_findings(
         if math.isfinite(float(row.get("hybrid_overhead_percent", math.nan)))
     ]
     plain_summary = _plain_language_summary(
-        primary_finding, multiplicity_finding, tail_finding, overhead_percents
+        primary_finding, multiplicity_finding, tail_finding, overhead_percents, exploratory_equivalence_finding
     )
 
     return {
@@ -641,6 +667,7 @@ def compute_findings(
         "plain_language_summary": {"summary": plain_summary},
         "primary_contrast": primary_finding,
         "multiplicity": multiplicity_finding,
+        "exploratory_equivalence": exploratory_equivalence_finding,
         "hybrid_overhead": hybrid_finding,
         "tail_under_loss": tail_finding,
     }
@@ -651,6 +678,7 @@ def _plain_language_summary(
     multiplicity_finding: dict[str, Any],
     tail_finding: dict[str, Any],
     overhead_percents: list[float],
+    exploratory_equivalence_finding: dict[str, Any],
 ) -> str:
     """Non-technical narrative tied to the project's objective: does adding
     post-quantum key exchange to TLS 1.3 cost anything worth worrying about,
@@ -680,6 +708,10 @@ def _plain_language_summary(
         )
 
     equivalence = primary_finding.get("equivalence")
+    exploratory_all_confirmed = (
+        exploratory_equivalence_finding.get("n_tested", 0) > 0
+        and exploratory_equivalence_finding["n_confirmed"] == exploratory_equivalence_finding["n_tested"]
+    )
     if equivalence:
         if equivalence["equivalent"]:
             sentences.append(
@@ -692,6 +724,13 @@ def _plain_language_summary(
                 f"{equivalence['margin_ms']:g} ms — the observed difference is small, but more batches would "
                 f"be needed to state that with statistical confidence."
             )
+    elif exploratory_equivalence_finding.get("n_tested"):
+        eef = exploratory_equivalence_finding
+        sentences.append(
+            f"A formal equivalence test backs this up across every condition tested: {eef['n_confirmed']} of "
+            f"{eef['n_tested']} condition-by-condition comparisons are statistically confirmed to differ by "
+            f"less than ±{eef['margin_ms']:g} ms, after correcting for testing multiple conditions."
+        )
 
     group_specific_effect = bool(tail_finding.get("group_specific_effect"))
     if tail_finding.get("available"):
@@ -718,16 +757,19 @@ def _plain_language_summary(
             "comparison in isolation."
         )
 
+    formally_confirmed = (equivalence and equivalence["equivalent"]) or (not equivalence and exploratory_all_confirmed)
+    confirmed_margin = equivalence["margin_ms"] if equivalence else exploratory_equivalence_finding.get("margin_ms")
+
     if typical_overhead is None:
         sentences.append(
             "There isn't enough paired classical/hybrid data in this run to say how large that cost "
             "typically is — see the technical findings above for what is and isn't available."
         )
-    elif overhead_small and not group_specific_effect and equivalence and equivalence["equivalent"]:
+    elif overhead_small and not group_specific_effect and formally_confirmed:
         sentences.append(
             f"Overall, this run's results formally support the practical viability of post-quantum and "
             f"hybrid TLS key exchange from a performance standpoint: the extra cost is confirmed smaller "
-            f"than {equivalence['margin_ms']:g} ms, and it doesn't change how the connection behaves under "
+            f"than {confirmed_margin:g} ms, and it doesn't change how the connection behaves under "
             f"packet loss."
         )
     elif overhead_small and not group_specific_effect:
