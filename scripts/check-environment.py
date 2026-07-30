@@ -43,7 +43,10 @@ def main() -> int:
             report["ok"] = False
 
         groups_text = command(args.openssl, "list", "-tls1_3", "-tls-groups")
-        available = set(re.findall(r"\b(?:X25519MLKEM768|MLKEM768|X25519)\b", groups_text))
+        available = {
+            name.upper()
+            for name in re.findall(r"\b(?:X25519MLKEM768|MLKEM768|X25519)\b", groups_text, re.IGNORECASE)
+        }
         missing = sorted(REQUIRED_GROUPS - available)
         checks["tls_groups"] = {
             "ok": not missing,
