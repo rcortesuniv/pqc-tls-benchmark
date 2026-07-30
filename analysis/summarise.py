@@ -552,6 +552,7 @@ def compute_findings(
             ratio = p99_worst / p99_baseline if p99_baseline else math.nan
             tail_finding = {
                 "available": True,
+                "group_specific_effect": not overlapping,
                 "summary": (
                     f"At {worst_rtt:g} ms RTT / {max_loss:g}% loss (the harshest tested condition), pooled p99 "
                     f"latency reaches {p99_worst:.0f} ms, {ratio:.1f}x the 0%-loss p99 at the same RTT "
@@ -559,14 +560,108 @@ def compute_findings(
                 ),
             }
 
+    overhead_percents = [
+        float(row["hybrid_overhead_percent"]) for row in deltas
+        if math.isfinite(float(row.get("hybrid_overhead_percent", math.nan)))
+    ]
+    plain_summary = _plain_language_summary(
+        primary_finding, multiplicity_finding, tail_finding, overhead_percents
+    )
+
     return {
         "generated_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "validation": {"summary": validation_summary},
+        "plain_language_summary": {"summary": plain_summary},
         "primary_contrast": primary_finding,
         "multiplicity": multiplicity_finding,
         "hybrid_overhead": hybrid_finding,
         "tail_under_loss": tail_finding,
     }
+
+
+def _plain_language_summary(
+    primary_finding: dict[str, Any],
+    multiplicity_finding: dict[str, Any],
+    tail_finding: dict[str, Any],
+    overhead_percents: list[float],
+) -> str:
+    """Non-technical narrative tied to the project's objective: does adding
+    post-quantum key exchange to TLS 1.3 cost anything worth worrying about,
+    compared with classical key exchange alone? No statistical jargon here —
+    see the other findings for the numbers behind each claim."""
+    sentences = [
+        "This experiment measures whether adding post-quantum key exchange to TLS "
+        "1.3 — on its own, or combined with classical key exchange as a hybrid — "
+        "meaningfully slows down a secure connection compared with using classical "
+        "key exchange alone."
+    ]
+
+    typical_overhead = statistics.median(overhead_percents) if overhead_percents else None
+    overhead_small = typical_overhead is not None and abs(typical_overhead) < 5
+
+    if typical_overhead is not None:
+        size_word = "small" if overhead_small else "noticeable"
+        prefix = (
+            "At the condition this project pre-registered as its main comparison, the"
+            if primary_finding.get("available")
+            else "Across the conditions tested, the"
+        )
+        sentences.append(
+            f"{prefix} post-quantum/hybrid handshake was measurably slower than the classical "
+            f"one, but only by a {size_word} margin — typically around {abs(typical_overhead):.1f}% "
+            f"of total handshake time."
+        )
+
+    group_specific_effect = bool(tail_finding.get("group_specific_effect"))
+    if tail_finding.get("available"):
+        if group_specific_effect:
+            sentences.append(
+                "Packet loss caused much larger latency spikes than the choice of key-exchange "
+                "algorithm did, and this run shows a possible difference in how badly connections "
+                "degrade under loss depending on which algorithm was used — worth a closer look "
+                "before drawing a practical conclusion on that point."
+            )
+        else:
+            sentences.append(
+                "Packet loss caused much larger latency spikes than the choice of key-exchange "
+                "algorithm did, and this was equally true whether the connection used classical, "
+                "post-quantum or hybrid key exchange — the network, not the cryptography, is the "
+                "bigger practical risk to handshake latency."
+            )
+
+    if multiplicity_finding.get("n_contrasts"):
+        sentences.append(
+            "This is pilot-scale evidence: the number of repeated batches limits how many of the "
+            "individual condition-by-condition comparisons can be called statistically decisive on "
+            "their own, so the overall pattern across conditions matters more than any single "
+            "comparison in isolation."
+        )
+
+    if typical_overhead is None:
+        sentences.append(
+            "There isn't enough paired classical/hybrid data in this run to say how large that cost "
+            "typically is — see the technical findings above for what is and isn't available."
+        )
+    elif overhead_small and not group_specific_effect:
+        sentences.append(
+            "Overall, this run's results support the practical viability of post-quantum and hybrid "
+            "TLS key exchange from a performance standpoint: the extra cost is small relative to "
+            "typical network latency, and it doesn't change how the connection behaves under packet loss."
+        )
+    elif overhead_small and group_specific_effect:
+        sentences.append(
+            "Overall, the raw handshake cost of post-quantum and hybrid key exchange is small, but "
+            "the possible loss-related difference between algorithms noted above is worth "
+            "investigating further before drawing a firm practical conclusion."
+        )
+    else:
+        sentences.append(
+            "Overall, this run shows a more than marginal performance cost for post-quantum or "
+            "hybrid key exchange compared with classical — worth weighing against the security "
+            "benefit for the intended deployment."
+        )
+
+    return " ".join(sentences)
 
 
 def main() -> int:

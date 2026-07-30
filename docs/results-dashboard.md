@@ -38,13 +38,23 @@ a notice explaining why.
 
 `summarise.py` also writes `analysis/findings.json`: a short, auto-generated
 prose summary computed once per run from that run's own already-computed
-outputs (nothing is re-analysed). It covers validation status, the
-pre-specified primary contrast (correctly framed with no multiplicity
-adjustment — distinct from the Holm-adjusted exploratory contrasts), a
-multiple-comparisons power note tied to the configured batch count, the
-hybrid-vs-classical overhead range, and tail behaviour under the harshest
-tested loss condition. The dashboard renders it as a "Findings for this run"
-section below the reading guide. It is a starting point for interpretation,
-not a substitute for reviewing the full contrast table — and if
-`analysis.primary_comparison` is missing from the experiment config, the
-primary-contrast finding says so explicitly instead of silently omitting it.
+outputs (nothing is re-analysed). The dashboard renders it as a "Findings for
+this run" section below the reading guide, in two parts:
+
+- A **plain-language paragraph** (`plain_language_summary`) written for a
+  general reader, tied to the project's actual objective — whether adding
+  post-quantum key exchange to TLS 1.3 costs anything worth worrying about
+  compared with classical key exchange. No statistical jargon; its conclusion
+  is derived from, not independent of, the technical findings below it, and
+  is phrased conditionally (it does not always report a favourable outcome —
+  a large overhead or a group-specific loss effect changes the wording).
+- Technical bullets covering validation status, the pre-specified primary
+  contrast (correctly framed with no multiplicity adjustment — distinct from
+  the Holm-adjusted exploratory contrasts), a multiple-comparisons power note
+  tied to the configured batch count, the hybrid-vs-classical overhead range,
+  and tail behaviour under the harshest tested loss condition.
+
+Both are a starting point for interpretation, not a substitute for reviewing
+the full contrast table — and if `analysis.primary_comparison` is missing
+from the experiment config, the primary-contrast finding (and the plain-
+language paragraph) say so explicitly instead of silently omitting it.

@@ -133,7 +133,7 @@ class AnalysisTests(unittest.TestCase):
         }
         confirmatory = MODULE.confirmatory_analysis(pairwise, config)
         primary_contrast = MODULE.primary_contrast_analysis(pairwise, config)
-        deltas = [{"hybrid_minus_x25519_ms": 0.3} for _ in range(10)]
+        deltas = [{"hybrid_minus_x25519_ms": 0.3, "hybrid_overhead_percent": 0.6} for _ in range(10)]
         report = {"observations": 1000, "status_counts": {"success": 1000}, "issues": []}
         findings = MODULE.compute_findings(report, deltas, confirmatory, primary_contrast, [], config)
         self.assertTrue(findings["primary_contrast"]["available"])
@@ -141,12 +141,18 @@ class AnalysisTests(unittest.TestCase):
         self.assertIn("no multiplicity adjustment", findings["primary_contrast"]["summary"])
         self.assertEqual(findings["multiplicity"]["n_contrasts"], 1)
         self.assertTrue(findings["hybrid_overhead"]["available"])
+        plain = findings["plain_language_summary"]["summary"]
+        self.assertIn("small margin", plain)
+        self.assertIn("practical viability", plain)
+        for jargon in ("Holm", "permutation", "95% CI", "p-value", "p="):
+            self.assertNotIn(jargon, plain)
 
     def test_compute_findings_flags_missing_primary_comparison(self):
         report = {"observations": 100, "status_counts": {"success": 100}, "issues": []}
         findings = MODULE.compute_findings(report, [], [], None, [], {})
         self.assertFalse(findings["primary_contrast"]["available"])
         self.assertIn("primary_comparison is missing", findings["primary_contrast"]["summary"])
+        self.assertIn("enough paired classical/hybrid data", findings["plain_language_summary"]["summary"])
 
     def test_validation_detects_duplicate_sequence(self):
         row = observation("batch-001", "X25519__rtt-0ms__loss-0p0pct", "X25519", 0, 1.0)

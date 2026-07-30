@@ -192,7 +192,10 @@ footer{color:var(--muted);font-size:.78rem;text-align:center;padding:2.5rem 1rem
   <section id="findings-section" hidden>
     <h2>Findings for this run</h2>
     <p class="desc">Auto-generated from this run's own data, computed once at analysis time. Read alongside the tables and charts below — these summaries don't replace reviewing the full contrast table.</p>
-    <div class="card"><ul class="desc" id="findings-list" style="margin:0;padding-left:1.1rem;list-style:disc"></ul></div>
+    <div class="card">
+      <p id="findings-plain" style="margin:0 0 1rem;font-size:.95rem;line-height:1.6"></p>
+      <ul class="desc" id="findings-list" style="margin:0;padding-left:1.1rem;list-style:disc"></ul>
+    </div>
   </section>
   <div class="toolbar" role="group" aria-label="Dashboard filters">
     <label>Group<select id="f-group"></select></label>
@@ -402,9 +405,12 @@ function renderRunSelector(){
   sel.addEventListener("change",()=>{location.href="/dashboard.html?run="+encodeURIComponent(sel.value);});
 }
 function renderFindings(){
-  const sec=document.getElementById("findings-section"), list=document.getElementById("findings-list");
-  const f=data.findings; if(!sec||!list) return;
+  const sec=document.getElementById("findings-section"), list=document.getElementById("findings-list"), plain=document.getElementById("findings-plain");
+  const f=data.findings; if(!sec||!list||!plain) return;
   list.innerHTML="";
+  plain.textContent="";
+  const plainSummary=f&&f.plain_language_summary&&f.plain_language_summary.summary;
+  if(plainSummary) plain.textContent=plainSummary;
   const order=[["validation","Validation"],["primary_contrast","Primary contrast"],["multiplicity","Multiple comparisons"],["hybrid_overhead","Hybrid overhead"],["tail_under_loss","Tail under loss"]];
   order.forEach(([key,label])=>{
     const entry=f&&f[key]; if(!entry||!entry.summary) return;
@@ -414,7 +420,7 @@ function renderFindings(){
     li.appendChild(document.createTextNode(entry.summary));
     list.appendChild(li);
   });
-  sec.hidden=list.children.length===0;
+  sec.hidden=list.children.length===0&&!plainSummary;
 }
 function update(){renderHero();renderKpis();updateSummary();updateTailTable();document.getElementById("chart-latency").innerHTML=chartLatency();document.getElementById("chart-rtt").innerHTML=chartVsRTT();document.getElementById("chart-tail").innerHTML=chartTail();updateContrasts();}
 [gf,rf,lf].forEach(c=>c.addEventListener("change",update));
