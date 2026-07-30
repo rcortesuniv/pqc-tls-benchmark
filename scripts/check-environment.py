@@ -53,7 +53,11 @@ def main() -> int:
         if missing:
             report["ok"] = False
     except (OSError, subprocess.CalledProcessError, ValueError) as error:
-        checks["openssl"] = {"ok": False, "error": str(error)}
+        checks["openssl"] = {
+            "ok": False,
+            "error": str(error),
+            "hint": "Run scripts/bootstrap-openssl.sh to build and install the pinned OpenSSL version.",
+        }
         report["ok"] = False
 
     for utility in ("ip", "tc"):
@@ -61,7 +65,7 @@ def main() -> int:
             path = command("sh", "-c", f"command -v {utility}").strip()
             checks[utility] = {"ok": bool(path), "path": path}
         except subprocess.CalledProcessError:
-            checks[utility] = {"ok": False}
+            checks[utility] = {"ok": False, "hint": "Install iproute2 (provides ip and tc)."}
             report["ok"] = False
 
     if args.json:
