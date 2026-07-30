@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import datetime as dt
 import hashlib
 import itertools
 import json
@@ -427,6 +428,147 @@ def pooled_tail_summary(observations: list[dict[str, Any]], config: dict[str, An
     return out
 
 
+def compute_findings(
+    report: dict[str, Any],
+    deltas: list[dict[str, Any]],
+    confirmatory: list[dict[str, Any]],
+    primary_contrast: dict[str, Any] | None,
+    pooled_tail: list[dict[str, Any]],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Auto-generated, per-run prose summary. Every claim is derived from this
+    run's own already-computed outputs; nothing here re-analyses raw data."""
+    observations = report["observations"]
+    successes = report["status_counts"].get("success", 0)
+    validation_summary = (
+        f"{successes:,}/{observations:,} handshakes succeeded ({successes / observations:.1%})."
+        if observations
+        else "No observations were recorded."
+    )
+    validation_summary += (
+        f" Validation flagged {len(report['issues'])} issue(s)." if report["issues"] else " Validation passed with no issues."
+    )
+
+    if primary_contrast and primary_contrast.get("mean") is not None:
+        pc = primary_contrast
+        excludes_zero = pc["ci95_low"] is not None and (pc["ci95_low"] > 0 or pc["ci95_high"] < 0)
+        verdict = "significant" if excludes_zero else "not significant"
+        primary_finding = {
+            "available": True,
+            "verdict": verdict,
+            "summary": (
+                f"{pc['comparison_group']} costs a mean {pc['mean']:+.3f} ms vs {pc['baseline_group']} at "
+                f"{pc['rtt_ms']:g} ms RTT / {pc['loss_percent_each_direction']:g}% loss (95% CI "
+                f"{pc['ci95_low']:.3f} to {pc['ci95_high']:.3f} ms, permutation p="
+                f"{pc['permutation_pvalue']:.4f}; one pre-specified comparison, no multiplicity adjustment). "
+                f"Result: {verdict} at the 95% level."
+            ),
+        }
+    else:
+        primary_finding = {
+            "available": False,
+            "summary": (
+                "No pre-specified primary comparison is configured (analysis.primary_comparison is missing from "
+                "the experiment config), so no primary-contrast verdict was computed for this run. The exploratory "
+                "contrasts below are Holm-adjusted and are not a substitute for a pre-registered primary hypothesis test."
+            ),
+        }
+
+    n_contrasts = len(confirmatory)
+    n_significant = sum(
+        1 for row in confirmatory
+        if row.get("holm_adjusted_pvalue") is not None and row["holm_adjusted_pvalue"] < 0.05
+    )
+    batches = config.get("execution", {}).get("batches")
+    multiplicity_summary = f"{n_significant} of {n_contrasts} exploratory contrasts remain significant after Holm adjustment (p < 0.05)."
+    if isinstance(batches, int) and batches > 0 and n_contrasts:
+        if batches <= 16:
+            min_pvalue = 2.0 ** (1 - batches)
+            floor_note = f"the exact paired sign-permutation test has a p-value floor of 2/2^{batches} ≈ {min_pvalue:.5f}"
+        else:
+            min_pvalue = 1.0 / 20000
+            floor_note = "the Monte Carlo permutation test (20,000 draws) has a p-value floor around 0.00005"
+        multiplicity_summary += f" With {batches} batches, {floor_note}."
+        bonferroni_threshold = 0.05 / n_contrasts
+        if min_pvalue > bonferroni_threshold:
+            multiplicity_summary += (
+                f" That floor exceeds the ~{bonferroni_threshold:.5f} raw p-value roughly needed to survive "
+                f"correction across {n_contrasts} comparisons, so real, consistent effects can still fail Holm "
+                f"adjustment purely from limited batch count — more batches, not more evidence, would be needed."
+            )
+    multiplicity_finding = {
+        "summary": multiplicity_summary,
+        "n_contrasts": n_contrasts,
+        "n_holm_significant": n_significant,
+    }
+
+    delta_values = [
+        float(row["hybrid_minus_x25519_ms"]) for row in deltas
+        if math.isfinite(float(row.get("hybrid_minus_x25519_ms", math.nan)))
+    ]
+    if delta_values:
+        hybrid_finding = {
+            "available": True,
+            "summary": (
+                f"Across {len(delta_values)} batch-conditions, X25519MLKEM768 costs "
+                f"{min(delta_values):+.3f} to {max(delta_values):+.3f} ms more than X25519 per handshake "
+                f"(median {statistics.median(delta_values):+.3f} ms)."
+            ),
+        }
+    else:
+        hybrid_finding = {
+            "available": False,
+            "summary": "No paired X25519 / X25519MLKEM768 batch data is available for this run.",
+        }
+
+    tail_finding = {"available": False, "summary": "No pooled tail data is available for this run."}
+    if pooled_tail:
+        max_loss = max(row["loss_percent_each_direction"] for row in pooled_tail)
+        worst_rtt = max(
+            (row["rtt_ms"] for row in pooled_tail if row["loss_percent_each_direction"] == max_loss),
+            default=None,
+        )
+        worst = [
+            row for row in pooled_tail
+            if row["loss_percent_each_direction"] == max_loss and row["rtt_ms"] == worst_rtt
+        ]
+        baseline = [
+            row for row in pooled_tail
+            if row["loss_percent_each_direction"] == 0.0 and row["rtt_ms"] == worst_rtt
+        ]
+        if worst and baseline:
+            p99_worst = statistics.median(row["pooled_p99_ms"] for row in worst)
+            p99_baseline = statistics.median(row["pooled_p99_ms"] for row in baseline)
+            overlapping = all(
+                a["p99_block_ci95_low_ms"] <= b["p99_block_ci95_high_ms"]
+                and b["p99_block_ci95_low_ms"] <= a["p99_block_ci95_high_ms"]
+                for a in worst for b in worst
+            )
+            group_note = (
+                "with overlapping 95% CIs across all groups (no evidence of a group-specific effect)"
+                if overlapping
+                else "with non-overlapping CIs between at least two groups (possible group-specific tail effect — inspect the pooled tail table)"
+            )
+            ratio = p99_worst / p99_baseline if p99_baseline else math.nan
+            tail_finding = {
+                "available": True,
+                "summary": (
+                    f"At {worst_rtt:g} ms RTT / {max_loss:g}% loss (the harshest tested condition), pooled p99 "
+                    f"latency reaches {p99_worst:.0f} ms, {ratio:.1f}x the 0%-loss p99 at the same RTT "
+                    f"({p99_baseline:.0f} ms), {group_note}."
+                ),
+            }
+
+    return {
+        "generated_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "validation": {"summary": validation_summary},
+        "primary_contrast": primary_finding,
+        "multiplicity": multiplicity_finding,
+        "hybrid_overhead": hybrid_finding,
+        "tail_under_loss": tail_finding,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("result_dir", type=pathlib.Path)
@@ -479,6 +621,10 @@ def main() -> int:
             indent=2,
         ) + "\n",
         encoding="utf-8",
+    )
+    findings = compute_findings(report, deltas, confirmatory, primary_contrast, pooled_tail, config)
+    (analysis_dir / "findings.json").write_text(
+        json.dumps(findings, indent=2) + "\n", encoding="utf-8"
     )
     print(json.dumps(report, indent=2))
     return 0 if not validation_issues else 1

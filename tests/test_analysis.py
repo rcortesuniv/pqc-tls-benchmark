@@ -114,6 +114,40 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(report["mean"], 0.2)
         self.assertEqual(report["multiplicity_adjustment"], "none: one pre-specified primary comparison")
 
+    def test_compute_findings_reports_significant_primary_contrast(self):
+        pairwise = [
+            {"batch_id": f"batch-{index:03d}", "rtt_ms": 50, "loss_percent_each_direction": 0.0,
+             "baseline_group": "X25519", "comparison_group": "X25519MLKEM768",
+             "comparison_minus_baseline_ms": 0.3, "failure_rate_delta": 0.0}
+            for index in range(1, 11)
+        ]
+        config = {
+            "execution": {"batches": 10},
+            "analysis": {
+                "seed": 1, "bootstrap_resamples": 200,
+                "primary_comparison": {
+                    "baseline_group": "X25519", "comparison_group": "X25519MLKEM768",
+                    "rtt_ms": 50, "loss_percent_each_direction": 0.0,
+                },
+            },
+        }
+        confirmatory = MODULE.confirmatory_analysis(pairwise, config)
+        primary_contrast = MODULE.primary_contrast_analysis(pairwise, config)
+        deltas = [{"hybrid_minus_x25519_ms": 0.3} for _ in range(10)]
+        report = {"observations": 1000, "status_counts": {"success": 1000}, "issues": []}
+        findings = MODULE.compute_findings(report, deltas, confirmatory, primary_contrast, [], config)
+        self.assertTrue(findings["primary_contrast"]["available"])
+        self.assertEqual(findings["primary_contrast"]["verdict"], "significant")
+        self.assertIn("no multiplicity adjustment", findings["primary_contrast"]["summary"])
+        self.assertEqual(findings["multiplicity"]["n_contrasts"], 1)
+        self.assertTrue(findings["hybrid_overhead"]["available"])
+
+    def test_compute_findings_flags_missing_primary_comparison(self):
+        report = {"observations": 100, "status_counts": {"success": 100}, "issues": []}
+        findings = MODULE.compute_findings(report, [], [], None, [], {})
+        self.assertFalse(findings["primary_contrast"]["available"])
+        self.assertIn("primary_comparison is missing", findings["primary_contrast"]["summary"])
+
     def test_validation_detects_duplicate_sequence(self):
         row = observation("batch-001", "X25519__rtt-0ms__loss-0p0pct", "X25519", 0, 1.0)
         with tempfile.TemporaryDirectory() as directory:

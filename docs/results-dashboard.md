@@ -33,3 +33,18 @@ servable run, newest first. Choosing one loads `/dashboard.html?run=<name>`;
 the same URL can be shared or bookmarked directly. Requesting an unknown or
 no-longer-servable run name falls back to the newest available run and shows
 a notice explaining why.
+
+## Findings
+
+`summarise.py` also writes `analysis/findings.json`: a short, auto-generated
+prose summary computed once per run from that run's own already-computed
+outputs (nothing is re-analysed). It covers validation status, the
+pre-specified primary contrast (correctly framed with no multiplicity
+adjustment — distinct from the Holm-adjusted exploratory contrasts), a
+multiple-comparisons power note tied to the configured batch count, the
+hybrid-vs-classical overhead range, and tail behaviour under the harshest
+tested loss condition. The dashboard renders it as a "Findings for this run"
+section below the reading guide. It is a starting point for interpretation,
+not a substitute for reviewing the full contrast table — and if
+`analysis.primary_comparison` is missing from the experiment config, the
+primary-contrast finding says so explicitly instead of silently omitting it.

@@ -76,6 +76,7 @@ def dashboard_data(result_dir: pathlib.Path) -> dict[str, Any]:
         "confirmatory": confirmatory.get("contrasts", []),
         "primary_contrast": confirmatory.get("primary_contrast"),
         "pooled_tail": load_csv(analysis_dir / "pooled_tail_summary.csv"),
+        "findings": load_json(analysis_dir / "findings.json", {}),
     }
 
 
@@ -188,6 +189,11 @@ footer{color:var(--muted);font-size:.78rem;text-align:center;padding:2.5rem 1rem
       <ul class="desc reading-guide-list" style="margin:.4rem 0 0;padding-left:1.1rem;list-style:disc"><li><strong>Colour coding — </strong>one colour per key-exchange group, used consistently across all charts.</li><li style="margin-top:.5rem"><strong>Primary contrast — </strong>the pre-specified hybrid-vs-classical comparison at 50 ms RTT, 0% loss, with no multiplicity adjustment. Every other contrast shown is exploratory and Holm-adjusted.</li><li style="margin-top:.5rem"><strong>Tail percentiles under loss — </strong>batch-median order statistics; unstable at 0.5% loss. Read the shape, not the exact level.</li></ul>
     </div>
   </div>
+  <section id="findings-section" hidden>
+    <h2>Findings for this run</h2>
+    <p class="desc">Auto-generated from this run's own data, computed once at analysis time. Read alongside the tables and charts below — these summaries don't replace reviewing the full contrast table.</p>
+    <div class="card"><ul class="desc" id="findings-list" style="margin:0;padding-left:1.1rem;list-style:disc"></ul></div>
+  </section>
   <div class="toolbar" role="group" aria-label="Dashboard filters">
     <label>Group<select id="f-group"></select></label>
     <label>RTT<select id="f-rtt"></select></label>
@@ -395,11 +401,26 @@ function renderRunSelector(){
   runs.forEach(name=>{const opt=document.createElement("option");opt.value=name;opt.textContent=name;if(name===data.run_name)opt.selected=true;sel.appendChild(opt);});
   sel.addEventListener("change",()=>{location.href="/dashboard.html?run="+encodeURIComponent(sel.value);});
 }
+function renderFindings(){
+  const sec=document.getElementById("findings-section"), list=document.getElementById("findings-list");
+  const f=data.findings; if(!sec||!list) return;
+  list.innerHTML="";
+  const order=[["validation","Validation"],["primary_contrast","Primary contrast"],["multiplicity","Multiple comparisons"],["hybrid_overhead","Hybrid overhead"],["tail_under_loss","Tail under loss"]];
+  order.forEach(([key,label])=>{
+    const entry=f&&f[key]; if(!entry||!entry.summary) return;
+    const li=document.createElement("li"); li.style.marginTop=".5rem";
+    const strong=document.createElement("strong"); strong.textContent=label+" — ";
+    li.appendChild(strong);
+    li.appendChild(document.createTextNode(entry.summary));
+    list.appendChild(li);
+  });
+  sec.hidden=list.children.length===0;
+}
 function update(){renderHero();renderKpis();updateSummary();updateTailTable();document.getElementById("chart-latency").innerHTML=chartLatency();document.getElementById("chart-rtt").innerHTML=chartVsRTT();document.getElementById("chart-tail").innerHTML=chartTail();updateContrasts();}
 [gf,rf,lf].forEach(c=>c.addEventListener("change",update));
 document.getElementById("reset-filters").addEventListener("click",reset);
 const logT=document.getElementById("log-toggle"); if(logT) logT.addEventListener("change",()=>{logScale=logT.checked;document.getElementById("chart-tail").innerHTML=chartTail();});
-renderBadge();renderWarn();renderRunSelector();reset();
+renderBadge();renderWarn();renderRunSelector();renderFindings();reset();
 </script>
 </body>
 </html>"""
