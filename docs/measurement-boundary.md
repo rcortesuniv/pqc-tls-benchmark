@@ -31,3 +31,33 @@ each direction, and is therefore described explicitly as
 CPU time and peak RSS are cell-level process evidence, not part of the latency
 endpoint. Packet captures are collected and parsed separately; TCP payload
 bytes must not be conflated with the TLS socket-BIO byte counters.
+
+## CPU scheduling and the noise floor
+
+Reported effects (the primary contrast, and most exploratory contrasts) are on
+the order of a few hundred microseconds. Without CPU isolation, the OS
+scheduler can migrate the client or server process between cores mid-run,
+adding jitter of a similar or larger magnitude — a real risk to validity at
+this effect size, not a theoretical one.
+
+`scripts/lab-up.sh` and `scripts/run-experiment.py` pin the server and client
+to fixed cores with `taskset` by default (server: CPU 0, client: CPU 1;
+override with `PQC_SERVER_CPU` / `PQC_CLIENT_CPU`, disable with
+`PQC_CPU_PINNING=0`). The container backend does the same natively via
+`cpuset` in `compose.yaml`. This is pinning, not isolation: it stops
+cross-core migration, but it does **not** reserve the core exclusively —
+unrelated host processes, interrupts, and (in a shared/virtualized
+environment such as a Codespace) other tenants on the same physical core can
+still preempt it. `isolcpus`/`nohz_full` kernel boot parameters or a
+dedicated bare-metal host would be needed to go further; that is out of
+scope for this tooling.
+
+Because pinning alone cannot prove the noise floor is smaller than a reported
+effect, `scripts/calibrate-noise-floor.py` measures it directly: it runs
+repeated handshakes of a single group, splits them into two interleaved arms,
+and puts the arm-vs-arm delta through the exact same bootstrap CI,
+sign-permutation test and TOST equivalence test used for real contrasts.
+Since both arms are the same group, any reported effect there is pure
+measurement noise — run it (with the same `--batches` as the real
+experiment) and compare its mean and CI against the primary contrast's
+before treating a small real effect as more than noise.

@@ -4,6 +4,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 PROJECT = pathlib.Path(__file__).resolve().parent.parent
@@ -71,6 +72,33 @@ class OrchestratorTests(unittest.TestCase):
             stream.flush()
             with self.assertRaises(ValueError):
                 MODULE.load_config(pathlib.Path(stream.name))
+
+    def test_cpu_pinning_disabled_by_env_var(self):
+        with mock.patch.dict("os.environ", {"PQC_CPU_PINNING": "0"}):
+            plan = MODULE.cpu_pinning_plan()
+        self.assertFalse(plan["enabled"])
+        self.assertIn("PQC_CPU_PINNING", plan["reason"])
+
+    def test_cpu_pinning_disabled_without_taskset(self):
+        with mock.patch.dict("os.environ", {}, clear=False), \
+             mock.patch("shutil.which", return_value=None):
+            plan = MODULE.cpu_pinning_plan()
+        self.assertFalse(plan["enabled"])
+        self.assertIn("taskset", plan["reason"])
+
+    def test_cpu_pinning_disabled_on_single_cpu(self):
+        with mock.patch("shutil.which", return_value="/usr/bin/taskset"), \
+             mock.patch("os.cpu_count", return_value=1):
+            plan = MODULE.cpu_pinning_plan()
+        self.assertFalse(plan["enabled"])
+
+    def test_cpu_pinning_enabled_uses_configured_client_cpu(self):
+        with mock.patch("shutil.which", return_value="/usr/bin/taskset"), \
+             mock.patch("os.cpu_count", return_value=4), \
+             mock.patch.dict("os.environ", {"PQC_CLIENT_CPU": "2"}):
+            plan = MODULE.cpu_pinning_plan()
+        self.assertTrue(plan["enabled"])
+        self.assertEqual(plan["client_cpu"], 2)
 
     def test_integrity_manifest_keeps_interrupted_evidence(self):
         with tempfile.TemporaryDirectory() as directory:

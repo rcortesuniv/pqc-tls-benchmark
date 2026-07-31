@@ -14,6 +14,7 @@ import random
 import re
 import resource
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -280,6 +281,20 @@ def integrity_manifest(output_dir: pathlib.Path) -> dict[str, str]:
     return {str(path.relative_to(output_dir)): sha256(path) for path in paths if path.is_file()}
 
 
+def cpu_pinning_plan() -> dict[str, Any]:
+    """Decide whether to pin the client to a fixed core, mirroring lab-up.sh's
+    server-side decision. Cross-core scheduler migration is jitter on the same
+    order as the sub-millisecond effects this benchmark measures; see
+    docs/measurement-boundary.md. Disable with PQC_CPU_PINNING=0."""
+    if os.environ.get("PQC_CPU_PINNING", "1") == "0":
+        return {"enabled": False, "reason": "disabled via PQC_CPU_PINNING=0"}
+    if shutil.which("taskset") is None:
+        return {"enabled": False, "reason": "taskset not found"}
+    if (os.cpu_count() or 1) < 2:
+        return {"enabled": False, "reason": "fewer than 2 CPUs available"}
+    return {"enabled": True, "client_cpu": int(os.environ.get("PQC_CLIENT_CPU", "1"))}
+
+
 def environment_manifest(
     config: dict[str, Any], config_path: pathlib.Path, client: pathlib.Path
 ) -> dict[str, Any]:
@@ -299,6 +314,7 @@ def environment_manifest(
         "platform": platform.platform(),
         "machine": platform.machine(),
         "cpu_count": os.cpu_count(),
+        "cpu_pinning": cpu_pinning_plan(),
     }
 
 
@@ -355,6 +371,7 @@ def main() -> int:
     endpoint = config["endpoint"]
     execution = config["execution"]
     backend = config["network_backend"]
+    cpu_pinning = cpu_pinning_plan()
     expected_schedule: list[dict[str, Any]] = []
     for ordinal, (batch, cell) in enumerate(planned, start=1):
         batch_id = f"batch-{batch:03d}"
@@ -427,8 +444,10 @@ def main() -> int:
             record["netem_observed"] = netem_observed
 
             if backend_type == "netns":
-                client_command = [
-                    "sudo", "ip", "netns", "exec", backend["client_namespace"],
+                client_command = ["sudo", "ip", "netns", "exec", backend["client_namespace"]]
+                if cpu_pinning["enabled"]:
+                    client_command += ["taskset", "-c", str(cpu_pinning["client_cpu"])]
+                client_command += [
                     str(args.client.resolve()), "--host", str(endpoint["host"]),
                     "--port", str(endpoint["port"]), "--server-name", str(endpoint["server_name"]),
                     "--ca-file", str((project / endpoint["ca_file"]).resolve()),

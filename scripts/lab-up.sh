@@ -9,6 +9,21 @@ server_ns="pqcbench-server"
 client_if="pqcbench-c"
 server_if="pqcbench-s"
 runtime_dir="${project_dir}/runtime"
+server_cpu="${PQC_SERVER_CPU:-0}"
+
+# Pin the server to a fixed core so cross-core migration doesn't add scheduler
+# jitter on the scale of the sub-millisecond effects this benchmark measures.
+# See docs/measurement-boundary.md. Disable with PQC_CPU_PINNING=0.
+server_taskset=()
+if [[ "${PQC_CPU_PINNING:-1}" != "0" ]]; then
+  if ! command -v taskset >/dev/null 2>&1; then
+    echo "taskset not found; running without CPU pinning (scheduler jitter may affect sub-millisecond comparisons)." >&2
+  elif [[ "$(nproc)" -lt 2 ]]; then
+    echo "Only 1 CPU available; running without CPU pinning (pinning client and server to one core would add contention, not remove it)." >&2
+  else
+    server_taskset=(taskset -c "${server_cpu}")
+  fi
+fi
 
 if [[ ! -x "${project_dir}/build/tls_bench_client" ]]; then
   echo "Build the benchmark client first: make OPENSSL_PREFIX=${openssl_prefix}" >&2
@@ -37,6 +52,7 @@ sudo ip -n "${server_ns}" link set "${server_if}" up
 
 sudo ip netns exec "${server_ns}" \
   env LD_LIBRARY_PATH="${openssl_prefix}/lib64:${openssl_prefix}/lib" \
+  "${server_taskset[@]}" \
   "${openssl_bin}" s_server \
   -accept 10.203.0.2:4433 \
   -tls1_3 \
@@ -67,7 +83,11 @@ for _ in $(seq 1 40); do
         exit 1
       fi
     done
-    echo "PQC TLS benchmark lab is ready and all experimental groups were verified."
+    if [[ "${#server_taskset[@]}" -gt 0 ]]; then
+      echo "PQC TLS benchmark lab is ready and all experimental groups were verified. Server pinned to CPU ${server_cpu}."
+    else
+      echo "PQC TLS benchmark lab is ready and all experimental groups were verified. Server is NOT CPU-pinned."
+    fi
     exit 0
   fi
   sleep 0.1

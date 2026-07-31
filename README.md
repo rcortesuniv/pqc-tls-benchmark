@@ -119,6 +119,19 @@ profile independently before a pilot cell, for example:
 scripts/calibrate-network.py --expected-rtt-ms 50 --expected-loss-percent 0.5
 ```
 
+`lab-up.sh` and `run-experiment.py` pin the server and client to fixed CPU
+cores by default (`taskset`; `cpuset` for the container backend) to reduce
+scheduler jitter at the sub-millisecond effect sizes this benchmark reports.
+See [`docs/measurement-boundary.md`](docs/measurement-boundary.md) for the
+pinning defaults, overrides and honest limits. Measure the resulting noise
+floor directly — same group, split into two arms, put through the identical
+statistical pipeline as a real contrast — before treating a small reported
+effect as more than measurement noise:
+
+```bash
+scripts/calibrate-noise-floor.py --batches 10 --attempts-per-arm 100
+```
+
 ## Inspect the randomised schedule
 
 Always inspect a dry run before collecting pilot data:
