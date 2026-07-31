@@ -65,6 +65,23 @@ def refresh_analysis(result_dir: pathlib.Path) -> str | None:
     return None
 
 
+def latest_noise_floor(result_dir: pathlib.Path) -> dict[str, Any] | None:
+    """scripts/calibrate-noise-floor.py writes noise-floor-<group>-<ts>.json
+    directly under results/, describing the measurement environment rather
+    than any one run, so it's picked up dynamically at render time instead
+    of being frozen into a specific run's findings."""
+    candidates = sorted(
+        result_dir.parent.glob("noise-floor-*.json"),
+        key=lambda path: path.stat().st_mtime, reverse=True,
+    )
+    if not candidates:
+        return None
+    try:
+        return json.loads(candidates[0].read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def dashboard_data(result_dir: pathlib.Path) -> dict[str, Any]:
     analysis_dir = result_dir / "analysis"
     confirmatory = load_json(analysis_dir / "confirmatory_analysis.json", {})
@@ -77,6 +94,7 @@ def dashboard_data(result_dir: pathlib.Path) -> dict[str, Any]:
         "primary_contrast": confirmatory.get("primary_contrast"),
         "pooled_tail": load_csv(analysis_dir / "pooled_tail_summary.csv"),
         "findings": load_json(analysis_dir / "findings.json", {}),
+        "noise_floor": latest_noise_floor(result_dir),
     }
 
 
@@ -245,6 +263,7 @@ const data = JSON.parse(document.getElementById("dashboard-data").textContent);
 const S = (data.summaries||[]).map(r => ({group:r.group, rtt:+r.rtt_ms, loss:+r.loss_percent_each_direction, failure_rate:+r.failure_rate, median:+r.median_latency_ms, p95:+r.p95_latency_ms, p99:+r.p99_latency_ms, br:+r.median_tls_bytes_read, bw:+r.median_tls_bytes_written}));
 const C = data.confirmatory||[];
 const P = data.primary_contrast||null;
+const NF = data.noise_floor||null;
 const fmt = (v,d=2) => Number.isFinite(v) ? v.toLocaleString(undefined,{maximumFractionDigits:d,minimumFractionDigits:(d>0&&Math.abs(v)<100?Math.min(d,2):0)}) : "—";
 const fmtInt = v => Number.isFinite(v) ? v.toLocaleString() : "—";
 const pct = v => Number.isFinite(v) ? (v*100).toLocaleString(undefined,{maximumFractionDigits:2})+"%" : "—";
@@ -391,8 +410,16 @@ function renderHero(){
   const eqTests=(P.equivalence_tests||[]).filter(t=>t);
   const tightestEq=eqTests.length?eqTests.reduce((a,b)=>a.margin_ms<b.margin_ms?a:b):null;
   const eqLine=tightestEq?`<div class="verdict">Equivalence within ±${fmt(tightestEq.margin_ms,0)} ms (two one-sided test): <b>${tightestEq.equivalent?"confirmed":"not confirmed"}</b> (p=${fmt(tightestEq.tost_pvalue,4)})</div>`:"";
+  let noiseLine="";
+  if(NF && NF.noise_floor_ms && Number.isFinite(NF.noise_floor_ms.mean)){
+    const nfMean=NF.noise_floor_ms.mean;
+    const nfCi=Number.isFinite(NF.noise_floor_ms.ci95_low)?`${fmt(NF.noise_floor_ms.ci95_low,4)} – ${fmt(NF.noise_floor_ms.ci95_high,4)} ms`:"—";
+    const ratio=Number.isFinite(P.mean)&&nfMean>0?Math.abs(P.mean/nfMean):null;
+    const ratioTxt=ratio&&Number.isFinite(ratio)?` — the primary contrast is ${fmt(ratio,0)}x the noise floor.`:"";
+    noiseLine=`<div class="verdict">Measurement noise floor (${NF.group}, same-group split): <b class="mono">${fmt(nfMean,4)} ms</b> <span class="cond">(95% CI ${nfCi})</span>${ratioTxt}</div>`;
+  }
   host.hidden=false; wrap.style.gridTemplateColumns="";
-  host.innerHTML=`<div class="eyebrow">Primary contrast — pre-specified, no multiplicity adjustment</div><div class="contrast"><span class="mono">${P.comparison_group} − ${P.baseline_group}</span> <span class="cond">at ${fmt(P.rtt_ms,0)} ms RTT · ${fmt(P.loss_percent_each_direction,1)}% loss</span></div><div class="big">${fmt(P.mean,3)}<span class="unit">ms</span></div><div class="stats"><span>95% CI <b class="mono">${ci}</b></span><span>permutation p <b>${P.permutation_pvalue<0.0001?"&lt; 0.0001":fmt(P.permutation_pvalue,4)}</b></span><span>n = ${P.n} batches</span></div><div class="verdict">${verdict}</div>${eqLine}`;
+  host.innerHTML=`<div class="eyebrow">Primary contrast — pre-specified, no multiplicity adjustment</div><div class="contrast"><span class="mono">${P.comparison_group} − ${P.baseline_group}</span> <span class="cond">at ${fmt(P.rtt_ms,0)} ms RTT · ${fmt(P.loss_percent_each_direction,1)}% loss</span></div><div class="big">${fmt(P.mean,3)}<span class="unit">ms</span></div><div class="stats"><span>95% CI <b class="mono">${ci}</b></span><span>permutation p <b>${P.permutation_pvalue<0.0001?"&lt; 0.0001":fmt(P.permutation_pvalue,4)}</b></span><span>n = ${P.n} batches</span></div><div class="verdict">${verdict}</div>${eqLine}${noiseLine}`;
 }
 function set(id,t){const e=document.getElementById(id); if(e) e.textContent=t;}
 function renderKpis(){const v=data.validation||{};const succ=(v.status_counts||{}).success||0;const obs=v.observations||0;set("k-obs",fmtInt(obs));set("k-cells",fmtInt(v.batch_cells||0));set("k-succ",fmtInt(succ));set("k-rate",obs?pct(succ/obs):"—");set("k-deltas",fmtInt(v.primary_batch_deltas||0));}

@@ -61,3 +61,9 @@ Since both arms are the same group, any reported effect there is pure
 measurement noise — run it (with the same `--batches` as the real
 experiment) and compare its mean and CI against the primary contrast's
 before treating a small real effect as more than noise.
+
+The dashboard picks this up automatically: it looks for the newest
+`noise-floor-*.json` directly under `results/` (a sibling of the run
+directories, not tied to any one run) and, when a primary contrast is
+present, shows the noise floor's mean, CI and the ratio between the two
+right below the primary contrast's own verdict.
