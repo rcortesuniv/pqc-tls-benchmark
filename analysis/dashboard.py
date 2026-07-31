@@ -401,7 +401,21 @@ function updateContrasts(){
 }
 function renderHero(){
   const host=document.getElementById("hero"); const wrap=document.getElementById("hero-wrap"); if(!host||!wrap) return;
-  if(!P){host.hidden=true;wrap.style.gridTemplateColumns="1fr";return;}
+  const nfAvailable=NF && NF.noise_floor_ms && Number.isFinite(NF.noise_floor_ms.mean);
+  if(!P && !nfAvailable){host.hidden=true;wrap.style.gridTemplateColumns="1fr";return;}
+  host.hidden=false; wrap.style.gridTemplateColumns="";
+  let noiseLine="";
+  if(nfAvailable){
+    const nfMean=NF.noise_floor_ms.mean;
+    const nfCi=Number.isFinite(NF.noise_floor_ms.ci95_low)?`${fmt(NF.noise_floor_ms.ci95_low,4)} – ${fmt(NF.noise_floor_ms.ci95_high,4)} ms`:"—";
+    const ratio=P&&Number.isFinite(P.mean)&&nfMean>0?Math.abs(P.mean/nfMean):null;
+    const ratioTxt=ratio&&Number.isFinite(ratio)?` — the primary contrast is ${fmt(ratio,0)}x the noise floor.`:"";
+    noiseLine=`<div class="verdict">Measurement noise floor (${NF.group}, same-group split): <b class="mono">${fmt(nfMean,4)} ms</b> <span class="cond">(95% CI ${nfCi})</span>${ratioTxt}</div>`;
+  }
+  if(!P){
+    host.innerHTML=`<div class="eyebrow">Measurement noise floor</div><div class="cond">No pre-specified primary comparison is configured for this run, so there is nothing to compare it against yet.</div>${noiseLine}`;
+    return;
+  }
   const match=C.find(r=>r.baseline_group===P.baseline_group&&r.comparison_group===P.comparison_group&&+r.rtt_ms===+P.rtt_ms&&+r.loss_percent_each_direction===+P.loss_percent_each_direction);
   const le1=match?accLe1(match):NaN;
   const ci=Number.isFinite(P.ci95_low)?`${fmt(P.ci95_low,3)} – ${fmt(P.ci95_high,3)} ms`:"—";
@@ -410,15 +424,6 @@ function renderHero(){
   const eqTests=(P.equivalence_tests||[]).filter(t=>t);
   const tightestEq=eqTests.length?eqTests.reduce((a,b)=>a.margin_ms<b.margin_ms?a:b):null;
   const eqLine=tightestEq?`<div class="verdict">Equivalence within ±${fmt(tightestEq.margin_ms,0)} ms (two one-sided test): <b>${tightestEq.equivalent?"confirmed":"not confirmed"}</b> (p=${fmt(tightestEq.tost_pvalue,4)})</div>`:"";
-  let noiseLine="";
-  if(NF && NF.noise_floor_ms && Number.isFinite(NF.noise_floor_ms.mean)){
-    const nfMean=NF.noise_floor_ms.mean;
-    const nfCi=Number.isFinite(NF.noise_floor_ms.ci95_low)?`${fmt(NF.noise_floor_ms.ci95_low,4)} – ${fmt(NF.noise_floor_ms.ci95_high,4)} ms`:"—";
-    const ratio=Number.isFinite(P.mean)&&nfMean>0?Math.abs(P.mean/nfMean):null;
-    const ratioTxt=ratio&&Number.isFinite(ratio)?` — the primary contrast is ${fmt(ratio,0)}x the noise floor.`:"";
-    noiseLine=`<div class="verdict">Measurement noise floor (${NF.group}, same-group split): <b class="mono">${fmt(nfMean,4)} ms</b> <span class="cond">(95% CI ${nfCi})</span>${ratioTxt}</div>`;
-  }
-  host.hidden=false; wrap.style.gridTemplateColumns="";
   host.innerHTML=`<div class="eyebrow">Primary contrast — pre-specified, no multiplicity adjustment</div><div class="contrast"><span class="mono">${P.comparison_group} − ${P.baseline_group}</span> <span class="cond">at ${fmt(P.rtt_ms,0)} ms RTT · ${fmt(P.loss_percent_each_direction,1)}% loss</span></div><div class="big">${fmt(P.mean,3)}<span class="unit">ms</span></div><div class="stats"><span>95% CI <b class="mono">${ci}</b></span><span>permutation p <b>${P.permutation_pvalue<0.0001?"&lt; 0.0001":fmt(P.permutation_pvalue,4)}</b></span><span>n = ${P.n} batches</span></div><div class="verdict">${verdict}</div>${eqLine}${noiseLine}`;
 }
 function set(id,t){const e=document.getElementById(id); if(e) e.textContent=t;}
